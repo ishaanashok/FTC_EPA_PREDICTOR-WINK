@@ -226,6 +226,22 @@ class FTCApi {
             throw error;
         }
     }
+
+    // Batch alliance matchmaker with precomputed EPAs
+    async getBestAlliancePartnersBatch(season, eventCode, teamNumbers, teamEPAs = {}) {
+        try {
+            const response = await this.axiosInstance.post('/alliance-matchmaker/batch', {
+                season,
+                eventCode,
+                teamNumbers,
+                teamEPAs
+            });
+            return response.data;
+        } catch (error) {
+            console.error('Error in batch alliance matchmaker request:', error);
+            throw error;
+        }
+    }
 }
 
 export default FTCApi;

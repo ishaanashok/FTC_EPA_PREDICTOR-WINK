@@ -9,6 +9,7 @@ class ParallelEPAProcessor:
         self.concurrency_limit = concurrency_limit
     
     async def calculate_team_epa(self, team_number: int, event_start_date: Optional[str] = None) -> Dict[str, Any]:
+        print(f"[EPA DEBUG] calculate_team_epa called for team {team_number}")
         """Calculate EPA for a single team."""
         try:
             team_start_time = time.time()
@@ -26,24 +27,20 @@ class ParallelEPAProcessor:
             return {"teamNumber": team_number, "historicalEPA": 0.0, "error": str(e)}
     
     async def calculate_multiple_team_epas(self, team_numbers: List[int], event_start_date: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Calculate EPAs for multiple teams in parallel with concurrency limit."""
+        """Calculate EPAs for multiple teams in parallel with concurrency limit and batch API calls."""
         semaphore = asyncio.Semaphore(self.concurrency_limit)
-        
-        async def limited_process_team(team_num):
+        results: List[Optional[Dict[str, Any]]] = [None] * len(team_numbers)
+
+        async def limited_process_team(idx: int, team_num: int):
             async with semaphore:
-                return await self.calculate_team_epa(team_num, event_start_date)
-        
-        start_time = time.time()
-        print(f"Starting EPA calculations for {len(team_numbers)} teams")
-        
-        # Process all teams concurrently with semaphore limiting
-        tasks = [limited_process_team(team_num) for team_num in team_numbers]
-        results = await asyncio.gather(*tasks)
-        
-        total_time = time.time() - start_time
-        print(f"Completed EPA calculations for {len(team_numbers)} teams in {total_time:.2f} seconds")
-        
-        return results
+                result = await self.calculate_team_epa(team_num, event_start_date)
+                results[idx] = result
+
+        # Launch all tasks at once, but with concurrency control
+        tasks = [limited_process_team(idx, team_num) for idx, team_num in enumerate(team_numbers)]
+        await asyncio.gather(*tasks)
+        # Filter out any None results (shouldn't happen, but for safety)
+        return [r for r in results if r is not None]
     
     def get_epa_mapping(self, epa_results: List[Dict[str, Any]]) -> Dict[str, float]:
         """Convert EPA results list to a mapping of team numbers to EPA values."""

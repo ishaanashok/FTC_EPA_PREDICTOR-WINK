@@ -5,6 +5,7 @@ import asyncio
 import httpx
 import math
 import time
+import traceback
 from typing import Optional
 from fastapi import HTTPException
 from utils.api_utils import ftc_api_request
@@ -19,6 +20,7 @@ class EPACalculator:
         self.k = 12  # EPA scaling factor for win probability
 
     async def get_team_matches(self, team_number: int, start_date: Optional[str] = None) -> dict:
+        print(f"[EPA DEBUG] Fetching matches for team {team_number}")
         all_matches = {}
         
         # Only fetch from 2022 onwards as older data seems unreliable
@@ -93,8 +95,8 @@ class EPACalculator:
                     continue
                 
                 print(f"Processing {len(match_tasks)} events for team {team_number} in season {season}")
-                  # Execute all requests in parallel with timeout and concurrency limiting
-                concurrency_limit = 20  # Limit concurrent requests to avoid overwhelming the API
+                # Lower concurrency limit to avoid API timeouts
+                concurrency_limit = 10  # Lowered from 10000 for reliability
                 
                 # Group tasks into chunks of concurrency_limit size
                 async def process_chunk(chunk):
@@ -146,7 +148,9 @@ class EPACalculator:
                     print(f"No qualification matches found for season {season}")
                 
             except Exception as e:
+                import traceback
                 print(f"Error processing season {season}: {str(e)}")
+                traceback.print_exc()
                 continue
         
         return all_matches
@@ -216,6 +220,7 @@ class EPACalculator:
         return weighted_sum / total_weight if total_weight > 0 else 0.0
 
     def calculate_historical_epa(self, all_matches: dict, team_number) -> float:
+        print(f"[EPA DEBUG] Calculating historical EPA for team {team_number}")
         if not all_matches:
             return 0.0
 
@@ -228,7 +233,6 @@ class EPACalculator:
                 if season_year in self.year_weights:
                     season_epa = self.calculate_season_epa(matches, team_number)
                     year_weight = self.year_weights[season_year]
-                    
                     weighted_sum += season_epa * year_weight
                     total_weight += year_weight
             except ValueError:

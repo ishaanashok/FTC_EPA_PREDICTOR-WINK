@@ -527,99 +527,53 @@ async def find_alliance_matches_batch(data: dict):
     """
     Find the best alliance partners for multiple teams at an event in parallel
     based on complementary strengths and EPAs.
-    
-    Expected request body:
-    {
-        "season": 2024,
-        "eventCode": "USMACMP",
-        "teamNumbers": [12345, 67890, ...]
-    }
     """
     try:
         season = data.get('season')
         event_code = data.get('eventCode')
         team_numbers = data.get('teamNumbers')
-        
+        provided_team_epas = data.get('teamEPAs')  # Accept precomputed EPAs from frontend
         if not all([season, event_code, team_numbers]) or not isinstance(team_numbers, list):
             raise HTTPException(status_code=400, detail="Missing required parameters or teamNumbers is not a list")
-        
         # Get event data including teams and EPAs
-        event_data = None
         try:
-            # First check if we can use the existing event predictions endpoint
             event_data = await get_event_predictions_epa({"season": season, "eventCode": event_code})
             teams_list = event_data.get('teams', [])
             team_epas = event_data.get('teamEPAs', {})
+            event_start_date = event_data.get('eventDetails', {}).get('events', [{}])[0].get('dateStart', None)
         except Exception as e:
-            # If we can't get event predictions, fetch teams directly
             print(f"Could not use event predictions: {e}")
             event_response = await ftc_api_request(f"/{season}/teams", {"eventCode": event_code})
             if event_response is not None and isinstance(event_response, dict):
                 teams_list = event_response.get('teams', [])
             else:
                 teams_list = []
-            
-            # We need EPAs for these teams
             epa_processor = ParallelEPAProcessor(concurrency_limit=50)
             all_team_numbers = [team['teamNumber'] for team in teams_list]
             epa_results = await epa_processor.calculate_multiple_team_epas(all_team_numbers)
             team_epas = epa_processor.get_epa_mapping(epa_results)
-        
-        # Get historical matches for all teams
+            event_start_date = None
+        # Merge provided EPAs with backend-calculated ones, prefer provided
+        if provided_team_epas:
+            team_epas.update({str(k): v for k, v in provided_team_epas.items()})
         matchmaker = AllianceMatchmaker()
-        team_matches = {}
-
-        # Use ParallelEPAProcessor directly for EPA calculations
         epa_processor = ParallelEPAProcessor(concurrency_limit=50)
-        
-        # First get matches for the input teams in parallel
-        input_teams_tasks = []
-        for team_num in team_numbers:
-            if team_num is not None and isinstance(team_num, int):
-                input_teams_tasks.append(epa_processor.calculate_team_epa(team_num))
-                
-        # Process all teams concurrently
-        if input_teams_tasks:
-            input_teams_results = await asyncio.gather(*input_teams_tasks)
-            for i, result in enumerate(input_teams_results):
-                team_num = team_numbers[i]
-                team_matches[team_num] = result.get('matches', {})
-        
-        # Get matches for other teams in the event (not in input teams)
         all_event_team_numbers = [team['teamNumber'] for team in teams_list]
-        other_teams_to_process = []
-        
-        # Limit to 50 teams total to avoid overloading
-        for other_team in all_event_team_numbers[:50]:
-            if other_team not in team_numbers:
-                other_teams_to_process.append(other_team)
-        
-        # Process other teams in batches
-        if other_teams_to_process:
-            other_teams_tasks = [epa_processor.calculate_team_epa(team_num) for team_num in other_teams_to_process]
-            other_teams_results = await asyncio.gather(*other_teams_tasks)
-            
-            for i, result in enumerate(other_teams_results):
-                other_team = other_teams_to_process[i]
-                team_matches[other_team] = result.get('matches', {})
-        
-        # Find the best alliance matches for each team in team_numbers
+        # Only calculate matches for all teams, not EPA again
+        all_needed_teams = list(set(team_numbers) | set(all_event_team_numbers))
+        all_team_results = await epa_processor.calculate_multiple_team_epas(all_needed_teams, event_start_date)
+        team_matches = {result['teamNumber']: result.get('matches', {}) for result in all_team_results}
         results = {}
-        for team_num in team_numbers:
-            try:
-                partner_result = await matchmaker.find_best_alliance_partner(
-                    team_num,
-                    all_event_team_numbers,
-                    team_epas,
-                    team_matches
-                )
-                results[team_num] = partner_result
-            except Exception as e:
-                print(f"Error finding alliance partner for team {team_num}: {str(e)}")
-                results[team_num] = {"error": str(e)}
-        
+        partner_tasks = [matchmaker.find_best_alliance_partner(
+            team_num,
+            all_event_team_numbers,
+            team_epas,
+            team_matches
+        ) for team_num in team_numbers]
+        partner_results = await asyncio.gather(*partner_tasks)
+        for i, team_num in enumerate(team_numbers):
+            results[team_num] = partner_results[i]
         return results
-        
     except Exception as e:
         print(f"Error in batch alliance matchmaker: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
