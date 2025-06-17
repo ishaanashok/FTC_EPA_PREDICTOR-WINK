@@ -22,7 +22,7 @@ function Home() {
               display: 'flex', 
               alignItems: 'center',
               gap: 4,
-              background: 'linear-gradient(45deg,rgb(142, 25, 210) 30%,rgb(239, 177, 251) 90%)',
+              background: 'linear-gradient(45deg,rgb(25, 84, 210) 30%,rgb(177, 207, 251) 90%)',
               color: 'white'
             }}
           >

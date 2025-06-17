@@ -331,12 +331,8 @@ const AllianceMatchmaker = ({ season, eventCode, teams, teamEPAs }) => {
   // Win probability view
   const WinProbabilityView = () => {
     let winProb = null;
-    let backendProb = null;
     if (winProbResult) {
       winProb = winProbResult.winProb;
-      if (winProbResult.matchPrediction && typeof winProbResult.matchPrediction.red_win_probability === 'number') {
-        backendProb = winProbResult.matchPrediction.red_win_probability;
-      }
     }
     return (
       <Box>
@@ -346,18 +342,13 @@ const AllianceMatchmaker = ({ season, eventCode, teams, teamEPAs }) => {
         {winProbResult && (
           <Box>
             <Typography variant="h6" gutterBottom>
-              Win Probability (EPA Formula): {winProb !== null ? (winProb * 100).toFixed(1) : '?'}% (You &amp; Partner)
-            </Typography>
-            {backendProb !== null && (
-              <Typography variant="h6" gutterBottom>
-                Win Probability (Backend/Actual Match): {(backendProb * 100).toFixed(1)}%
-              </Typography>
-            )}
-            <Typography variant="body1" gutterBottom>
-              Your Alliance: {winProbResult.yourAlliance.join(' & ')} (EPA: {winProbResult.yourAlliance.map(tn => teamEPAs[tn] || 0).join(' + ')} = {winProbResult.yourAlliance.reduce((sum, tn) => sum + (teamEPAs[tn] || 0), 0).toFixed(1)})
+              Win Probability: {winProb !== null ? (winProb * 100).toFixed(1) : '?'}% (You &amp; Partner)
             </Typography>
             <Typography variant="body1" gutterBottom>
-              Highest EPA Opponents: {winProbResult.oppAlliance.join(' & ')} (EPA: {winProbResult.oppAlliance.map(tn => teamEPAs[tn] || 0).join(' + ')} = {winProbResult.oppAlliance.reduce((sum, tn) => sum + (teamEPAs[tn] || 0), 0).toFixed(1)})
+              Your Alliance: {winProbResult.yourAlliance.join(' & ')}
+            </Typography>
+            <Typography variant="body1" gutterBottom>
+              Highest EPA Opponents: {winProbResult.oppAlliance.join(' & ')}
             </Typography>
             <Typography variant="body2" color="textSecondary">
               Predicted Winner: {winProb >= 0.5 ? 'Your Alliance' : 'Opponents'}

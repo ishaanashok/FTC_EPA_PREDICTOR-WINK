@@ -211,7 +211,17 @@ const EventDetails = () => {
                   const prediction = match.prediction || {};
                   const winProb = prediction.predicted_winner === 'Red' ? 
                     prediction.red_win_probability : prediction.blue_win_probability;
-                  
+                  // Determine predicted winner color
+                  const predictedWinnerBg = prediction.predicted_winner === 'Red'
+                    ? 'rgba(255, 0, 0, 0.08)'
+                    : prediction.predicted_winner === 'Blue'
+                    ? 'rgba(0, 0, 255, 0.08)'
+                    : undefined;
+                  // Determine if prediction was correct
+                  const actualWinner = redWon ? 'Red' : blueWon ? 'Blue' : 'Tie';
+                  const winProbColor = prediction.predicted_winner && actualWinner !== 'Tie'
+                    ? (prediction.predicted_winner === actualWinner ? 'success.main' : 'error.main')
+                    : undefined;
                   return (
                     <TableRow key={match.matchNumber}>
                       <TableCell>{match.description || `Match ${match.matchNumber}`}</TableCell>
@@ -227,8 +237,12 @@ const EventDetails = () => {
                           .map(team => team.teamNumber)
                           .join(', ')}
                       </TableCell>
-                      <TableCell>{prediction.predicted_winner || 'N/A'}</TableCell>
-                      <TableCell>{winProb ? `${(winProb * 100).toFixed(1)}%` : 'N/A'}</TableCell>
+                      <TableCell sx={predictedWinnerBg ? { backgroundColor: predictedWinnerBg } : {}}>
+                        {prediction.predicted_winner || 'N/A'}
+                      </TableCell>
+                      <TableCell sx={winProbColor ? { color: winProbColor, fontWeight: 600 } : {}}>
+                        {winProb ? `${(winProb * 100).toFixed(1)}%` : 'N/A'}
+                      </TableCell>
                       <TableCell align="right" sx={{ color: redWon ? 'success.main' : 'inherit' }}>
                         {match.scoreRedFinal}
                       </TableCell>
@@ -236,7 +250,7 @@ const EventDetails = () => {
                         {match.scoreBlueFinal}
                       </TableCell>
                       <TableCell>
-                        {redWon ? 'Red' : blueWon ? 'Blue' : 'Tie'}
+                        {actualWinner}
                       </TableCell>
                     </TableRow>
                   );

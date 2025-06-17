@@ -577,3 +577,62 @@ async def find_alliance_matches_batch(data: dict):
     except Exception as e:
         print(f"Error in batch alliance matchmaker: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+# API Performance Analysis Endpoints
+import io
+import sys
+from api_log_analyzer import APILogAnalyzer
+
+class LogCapture:
+    def __init__(self):
+        self.log_buffer = io.StringIO()
+        self.original_stdout = None
+        self.active = False
+        self.max_lines = 1000
+        self.lines = []
+
+    def start_capture(self):
+        if not self.active:
+            self.original_stdout = sys.stdout
+            sys.stdout = self
+            self.active = True
+            print("[LOG CAPTURE] Log capture started")
+
+    def stop_capture(self):
+        if self.active:
+            sys.stdout = self.original_stdout
+            self.active = False
+            print("[LOG CAPTURE] Log capture stopped")
+            return self.get_logs()
+        return ""
+
+    def write(self, text):
+        # Write to original stdout and buffer
+        if self.original_stdout:
+            self.original_stdout.write(text)
+        
+        # Only store API REQUEST logs
+        if "[API REQUEST]" in text:
+            self.lines.append(text)
+            if len(self.lines) > self.max_lines:
+                self.lines.pop(0)  # Remove oldest line
+
+    def flush(self):
+        if self.original_stdout:
+            self.original_stdout.flush()
+
+    def get_logs(self):
+        return "\n".join(self.lines)
+
+# Initialize log capture
+log_capture = LogCapture()
+log_capture.start_capture()
+
+@app.get("/api/diagnostic/api-performance")
+async def api_performance_analysis():
+    """Analyze API performance based on captured logs"""
+    logs = log_capture.get_logs()
+    analyzer = APILogAnalyzer()
+    analyzer.analyze_logs(log_content=logs)
+    report = analyzer.generate_report()
+    return {"report": report}
