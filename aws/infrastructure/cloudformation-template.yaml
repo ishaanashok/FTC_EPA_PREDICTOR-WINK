@@ -1,0 +1,520 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'FTC Predictor AWS Infrastructure - DynamoDB, Lambda, API Gateway, and EventBridge with optional S3 bucket'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: 'dev'
+    AllowedValues: [dev, stage, prod]
+    Description: Environment name
+  
+  FTCApiUsername:
+    Type: String
+    Description: FTC API Username
+    NoEcho: true
+    
+  FTCApiKey:
+    Type: String
+    Description: FTC API Key
+    NoEcho: true
+  
+  ExistingLambdaDeploymentBucket:
+    Type: String
+    Default: ''
+    Description: 'Optional: Name of existing S3 bucket for Lambda deployment packages. If not provided, a new bucket will be created.'
+  
+  CreateLambdaDeploymentBucket:
+    Type: String
+    Default: 'true'
+    AllowedValues: [true, false]
+    Description: 'Whether to create a new Lambda deployment bucket. Set to false if using an existing bucket.'
+
+Conditions:
+  CreateNewBucket: !And
+    - !Equals [!Ref CreateLambdaDeploymentBucket, 'true']
+    - !Equals [!Ref ExistingLambdaDeploymentBucket, '']
+  
+  UseExistingBucket: !Not [!Condition CreateNewBucket]
+
+Resources:
+  # DynamoDB Tables
+  FTCTeamsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub 'FTC_Teams_${Environment}'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: teamNumber
+          AttributeType: N
+        - AttributeName: season
+          AttributeType: N
+      KeySchema:
+        - AttributeName: teamNumber
+          KeyType: HASH
+        - AttributeName: season
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: SeasonIndex
+          KeySchema:
+            - AttributeName: season
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: FTC-Predictor
+
+  FTCEventsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub 'FTC_Events_${Environment}'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: eventCode
+          AttributeType: S
+        - AttributeName: season
+          AttributeType: N
+      KeySchema:
+        - AttributeName: eventCode
+          KeyType: HASH
+        - AttributeName: season
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: SeasonIndex
+          KeySchema:
+            - AttributeName: season
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: FTC-Predictor
+
+  FTCMatchesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub 'FTC_Matches_${Environment}'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: matchId
+          AttributeType: S
+        - AttributeName: eventCode
+          AttributeType: S
+        - AttributeName: season
+          AttributeType: N
+        - AttributeName: teamNumber
+          AttributeType: N
+      KeySchema:
+        - AttributeName: matchId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: EventIndex
+          KeySchema:
+            - AttributeName: eventCode
+              KeyType: HASH
+            - AttributeName: season
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: TeamIndex
+          KeySchema:
+            - AttributeName: teamNumber
+              KeyType: HASH
+            - AttributeName: season
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: FTC-Predictor
+
+  FTCEPATable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub 'FTC_EPA_${Environment}'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: teamNumber
+          AttributeType: N
+        - AttributeName: calculationDate
+          AttributeType: S
+      KeySchema:
+        - AttributeName: teamNumber
+          KeyType: HASH
+        - AttributeName: calculationDate
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: LatestEPAIndex
+          KeySchema:
+            - AttributeName: teamNumber
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: FTC-Predictor
+
+  # Cache table removed - no longer using caching layer
+
+  # IAM Role for Lambda Functions
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'FTC-Lambda-Role-${Environment}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBFullAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                  - dynamodb:BatchGetItem
+                  - dynamodb:BatchWriteItem
+                Resource:
+                  - !GetAtt FTCTeamsTable.Arn
+                  - !GetAtt FTCEventsTable.Arn
+                  - !GetAtt FTCMatchesTable.Arn
+                  - !GetAtt FTCEPATable.Arn
+                  - !Sub '${FTCTeamsTable.Arn}/index/*'
+                  - !Sub '${FTCEventsTable.Arn}/index/*'
+                  - !Sub '${FTCMatchesTable.Arn}/index/*'
+                  - !Sub '${FTCEPATable.Arn}/index/*'
+        - PolicyName: SecretsManagerAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Ref FTCApiCredentials
+
+  # Secrets Manager for FTC API Credentials
+  FTCApiCredentials:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub 'FTC-API-Credentials-${Environment}'
+      Description: FTC API Username and Key
+      SecretString: !Sub |
+        {
+          "username": "${FTCApiUsername}",
+          "api_key": "${FTCApiKey}"
+        }
+
+  # Lambda Layer for Common Dependencies
+  CommonDependenciesLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      LayerName: !Sub 'ftc-common-dependencies-${Environment}'
+      Description: Common dependencies for FTC Predictor Lambda functions
+      Content:
+        S3Bucket: !If [CreateNewBucket, !Ref LambdaDeploymentBucket, !Ref ExistingLambdaDeploymentBucket]
+        S3Key: layers/common-dependencies.zip
+      CompatibleRuntimes:
+        - python3.9
+        - python3.10
+        - python3.11
+
+  # S3 Bucket for Lambda deployment packages (conditional)
+  LambdaDeploymentBucket:
+    Type: AWS::S3::Bucket
+    Condition: CreateNewBucket
+    Properties:
+      BucketName: !Sub 'ftc-lambda-deployment-${Environment}-${AWS::AccountId}'
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # Lambda Functions
+  DataSyncLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'ftc-data-sync-${Environment}'
+      Runtime: python3.11
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        S3Bucket: !If [CreateNewBucket, !Ref LambdaDeploymentBucket, !Ref ExistingLambdaDeploymentBucket]
+        S3Key: functions/data-sync.zip
+      Timeout: 900
+      MemorySize: 1024
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          TEAMS_TABLE: !Ref FTCTeamsTable
+          EVENTS_TABLE: !Ref FTCEventsTable
+          MATCHES_TABLE: !Ref FTCMatchesTable
+          EPA_TABLE: !Ref FTCEPATable
+          SECRETS_NAME: !Ref FTCApiCredentials
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: FTC-Predictor
+
+  TeamsApiLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'ftc-teams-api-${Environment}'
+      Runtime: python3.11
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        S3Bucket: !If [CreateNewBucket, !Ref LambdaDeploymentBucket, !Ref ExistingLambdaDeploymentBucket]
+        S3Key: functions/teams-api.zip
+      Timeout: 30
+      MemorySize: 512
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          TEAMS_TABLE: !Ref FTCTeamsTable
+
+  EventsApiLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'ftc-events-api-${Environment}'
+      Runtime: python3.11
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        S3Bucket: !If [CreateNewBucket, !Ref LambdaDeploymentBucket, !Ref ExistingLambdaDeploymentBucket]
+        S3Key: functions/events-api.zip
+      Timeout: 30
+      MemorySize: 512
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          EVENTS_TABLE: !Ref FTCEventsTable
+
+  MatchesApiLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'ftc-matches-api-${Environment}'
+      Runtime: python3.11
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        S3Bucket: !If [CreateNewBucket, !Ref LambdaDeploymentBucket, !Ref ExistingLambdaDeploymentBucket]
+        S3Key: functions/matches-api.zip
+      Timeout: 30
+      MemorySize: 512
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          MATCHES_TABLE: !Ref FTCMatchesTable
+
+  EPAApiLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'ftc-epa-api-${Environment}'
+      Runtime: python3.11
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        S3Bucket: !If [CreateNewBucket, !Ref LambdaDeploymentBucket, !Ref ExistingLambdaDeploymentBucket]
+        S3Key: functions/epa-api.zip
+      Timeout: 60
+      MemorySize: 1024
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          EPA_TABLE: !Ref FTCEPATable
+          MATCHES_TABLE: !Ref FTCMatchesTable
+
+  AllianceMatchmakerLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'ftc-alliance-matchmaker-${Environment}'
+      Runtime: python3.11
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        S3Bucket: !If [CreateNewBucket, !Ref LambdaDeploymentBucket, !Ref ExistingLambdaDeploymentBucket]
+        S3Key: functions/alliance-matchmaker.zip
+      Timeout: 60
+      MemorySize: 1024
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          EPA_TABLE: !Ref FTCEPATable
+          MATCHES_TABLE: !Ref FTCMatchesTable
+
+  # EventBridge Rule for Data Sync (every 6 hours)
+  DataSyncScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub 'ftc-data-sync-schedule-${Environment}'
+      Description: Trigger data sync every 6 hours
+      ScheduleExpression: 'rate(6 hours)'
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt DataSyncLambda.Arn
+          Id: DataSyncTarget
+
+  # Permission for EventBridge to invoke Lambda
+  DataSyncLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref DataSyncLambda
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt DataSyncScheduleRule.Arn
+
+  # API Gateway
+  FTCApiGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub 'FTC-Predictor-API-${Environment}'
+      Description: FTC Predictor API Gateway
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+
+  # API Gateway Deployment
+  ApiGatewayDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - TeamsApiResource
+      - EventsApiResource
+      - MatchesApiResource
+      - EPAApiResource
+      - AllianceApiResource
+    Properties:
+      RestApiId: !Ref FTCApiGateway
+      StageName: !Ref Environment
+
+  # API Gateway Resources and Methods
+  ApiResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref FTCApiGateway
+      ParentId: !GetAtt FTCApiGateway.RootResourceId
+      PathPart: api
+
+  TeamsApiResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref FTCApiGateway
+      ParentId: !Ref ApiResource
+      PathPart: teams
+
+  EventsApiResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref FTCApiGateway
+      ParentId: !Ref ApiResource
+      PathPart: events
+
+  MatchesApiResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref FTCApiGateway
+      ParentId: !Ref ApiResource
+      PathPart: matches
+
+  EPAApiResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref FTCApiGateway
+      ParentId: !Ref ApiResource
+      PathPart: epa
+
+  AllianceApiResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref FTCApiGateway
+      ParentId: !Ref ApiResource
+      PathPart: alliance
+
+  # CORS Configuration
+  OptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref FTCApiGateway
+      ResourceId: !Ref ApiResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates:
+              application/json: ''
+        PassthroughBehavior: WHEN_NO_MATCH
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: false
+            method.response.header.Access-Control-Allow-Methods: false
+            method.response.header.Access-Control-Allow-Origin: false
+
+Outputs:
+  ApiGatewayUrl:
+    Description: URL of the API Gateway
+    Value: !Sub 'https://${FTCApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
+    Export:
+      Name: !Sub '${AWS::StackName}-ApiGatewayUrl'
+
+  DynamoDBTableNames:
+    Description: Names of DynamoDB tables
+    Value: !Sub |
+      Teams: ${FTCTeamsTable}
+      Events: ${FTCEventsTable}
+      Matches: ${FTCMatchesTable}
+      EPA: ${FTCEPATable}
+
+  LambdaDeploymentBucket:
+    Description: S3 bucket used for Lambda deployment packages
+    Value: !If [CreateNewBucket, !Ref LambdaDeploymentBucket, !Ref ExistingLambdaDeploymentBucket]
+    Export:
+      Name: !Sub '${AWS::StackName}-LambdaDeploymentBucket'
+
+  LambdaFunctionArns:
+    Description: ARNs of Lambda functions
+    Value: !Sub |
+      DataSync: ${DataSyncLambda.Arn}
+      TeamsApi: ${TeamsApiLambda.Arn}
+      EventsApi: ${EventsApiLambda.Arn}
+      MatchesApi: ${MatchesApiLambda.Arn}
+      EPAApi: ${EPAApiLambda.Arn}
+      AllianceMatchmaker: ${AllianceMatchmakerLambda.Arn} 

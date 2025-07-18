@@ -1,0 +1,334 @@
+from datetime import datetime, timezone
+from typing import List, Dict, Optional, Any
+from pydantic import BaseModel, Field
+import json
+from decimal import Decimal
+
+class DynamoDBBaseModel(BaseModel):
+    """Base model for DynamoDB items with common utilities"""
+    
+    def to_dynamodb_item(self) -> Dict[str, Any]:
+        """Convert Pydantic model to DynamoDB item format"""
+        item = self.dict()
+        return self._convert_to_dynamodb_types(item)
+    
+    def _convert_to_dynamodb_types(self, obj: Any) -> Any:
+        """Convert Python types to DynamoDB compatible types"""
+        if isinstance(obj, float):
+            return Decimal(str(obj))
+        elif isinstance(obj, dict):
+            return {k: self._convert_to_dynamodb_types(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [self._convert_to_dynamodb_types(item) for item in obj]
+        elif isinstance(obj, datetime):
+            return obj.isoformat()
+        return obj
+
+class Team(DynamoDBBaseModel):
+    """Team model for FTC_Teams table"""
+    teamNumber: int = Field(..., description="Team number")
+    season: int = Field(..., description="Competition season")
+    teamName: str = Field("", description="Team name")
+    schoolName: str = Field("", description="School name")
+    city: str = Field("", description="City")
+    state: str = Field("", description="State")
+    country: str = Field("", description="Country")
+    rookieYear: Optional[int] = Field(None, description="Rookie year")
+    website: Optional[str] = Field(None, description="Team website")
+    lastUpdated: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    
+    # HTTP Caching Support & Change Detection
+    lastModified: Optional[str] = Field(None, description="Last-Modified header from FTC API")
+    etag: Optional[str] = Field(None, description="ETag from FTC API response")
+    apiLastModified: Optional[datetime] = Field(None, description="Parsed Last-Modified timestamp")
+    dataVersion: Optional[str] = Field(None, description="Data version for change tracking")
+    dataHash: Optional[str] = Field(None, description="Hash of team data for EPA update detection")
+    
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.isoformat()
+        }
+
+class Event(DynamoDBBaseModel):
+    """Event model for FTC_Events table"""
+    eventCode: str = Field(..., description="Event code")
+    season: int = Field(..., description="Competition season")
+    eventName: str = Field("", description="Event name")
+    eventType: str = Field("", description="Event type")
+    dateStart: Optional[str] = Field(None, description="Event start date")
+    dateEnd: Optional[str] = Field(None, description="Event end date")
+    venue: Optional[str] = Field(None, description="Event venue")
+    address: Optional[str] = Field(None, description="Event address")
+    city: Optional[str] = Field(None, description="Event city")
+    state: Optional[str] = Field(None, description="Event state")
+    country: Optional[str] = Field(None, description="Event country")
+    timezone: Optional[str] = Field(None, description="Event timezone")
+    website: Optional[str] = Field(None, description="Event website")
+    liveStreamUrl: Optional[str] = Field(None, description="Live stream URL")
+    teamCount: int = Field(0, description="Number of teams")
+    matchCount: int = Field(0, description="Number of matches")
+    lastUpdated: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    
+    # HTTP Caching Support & Change Detection
+    lastModified: Optional[str] = Field(None, description="Last-Modified header from FTC API")
+    etag: Optional[str] = Field(None, description="ETag from FTC API response")
+    apiLastModified: Optional[datetime] = Field(None, description="Parsed Last-Modified timestamp")
+    dataVersion: Optional[str] = Field(None, description="Data version for change tracking")
+    dataHash: Optional[str] = Field(None, description="Hash of event data for EPA update detection")
+    matchesLastModified: Optional[str] = Field(None, description="Last-Modified for matches endpoint")
+    rankingsLastModified: Optional[str] = Field(None, description="Last-Modified for rankings endpoint")
+
+class MatchTeam(DynamoDBBaseModel):
+    """Individual team data within a match"""
+    teamNumber: int = Field(..., description="Team number")
+    station: str = Field(..., description="Station (Red1, Red2, Blue1, Blue2)")
+    dq: bool = Field(False, description="Disqualified")
+    noShow: bool = Field(False, description="No show")
+    surrogate: bool = Field(False, description="Surrogate")
+
+class MatchScore(DynamoDBBaseModel):
+    """Match score breakdown"""
+    alliance: str = Field(..., description="Alliance color (Red/Blue)")
+    totalPoints: int = Field(0, description="Total points")
+    autoPoints: int = Field(0, description="Autonomous points")
+    teleopPoints: int = Field(0, description="Teleop points")
+    endgamePoints: int = Field(0, description="Endgame points")
+    penaltyPoints: int = Field(0, description="Penalty points")
+    # Season-specific scoring can be added here
+
+class Match(DynamoDBBaseModel):
+    """Match model for FTC_Matches table"""
+    matchId: str = Field(..., description="Unique match ID: season-eventCode-matchNumber")
+    season: int = Field(..., description="Competition season")
+    eventCode: str = Field(..., description="Event code")
+    matchNumber: int = Field(..., description="Match number")
+    description: str = Field("", description="Match description")
+    tournamentLevel: str = Field("", description="Tournament level (qual, playoff)")
+    series: Optional[int] = Field(None, description="Series number for playoffs")
+    matchName: Optional[str] = Field(None, description="Match name")
+    playNumber: Optional[int] = Field(None, description="Play number")
+    fieldNumber: Optional[int] = Field(None, description="Field number")
+    startTime: Optional[str] = Field(None, description="Scheduled start time")
+    actualStartTime: Optional[str] = Field(None, description="Actual start time")
+    postResultTime: Optional[str] = Field(None, description="Result post time")
+    
+    # Teams
+    teams: List[MatchTeam] = Field(default_factory=list, description="Teams in match")
+    
+    # Scores
+    redScore: Optional[MatchScore] = Field(None, description="Red alliance score")
+    blueScore: Optional[MatchScore] = Field(None, description="Blue alliance score")
+    
+    # Quick access fields for queries
+    redTeams: List[int] = Field(default_factory=list, description="Red team numbers")
+    blueTeams: List[int] = Field(default_factory=list, description="Blue team numbers")
+    allTeams: List[int] = Field(default_factory=list, description="All team numbers")
+    
+    lastUpdated: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    
+    # HTTP Caching Support & Change Detection
+    lastModified: Optional[str] = Field(None, description="Last-Modified header from FTC API")
+    etag: Optional[str] = Field(None, description="ETag from FTC API response")
+    apiLastModified: Optional[datetime] = Field(None, description="Parsed Last-Modified timestamp")
+    dataVersion: Optional[str] = Field(None, description="Data version for change tracking")
+    dataHash: Optional[str] = Field(None, description="Hash of match data for EPA update detection")
+
+class EPACalculation(DynamoDBBaseModel):
+    """EPA calculation model for FTC_EPA table"""
+    teamNumber: int = Field(..., description="Team number")
+    calculationDate: str = Field(..., description="Calculation date (YYYY-MM-DD)")
+    historicalEPA: float = Field(0.0, description="Historical EPA value")
+    currentSeasonEPA: float = Field(0.0, description="Current season EPA")
+    
+    # Season-specific EPAs
+    seasonEPAs: Dict[int, float] = Field(default_factory=dict, description="EPA by season")
+    
+    # Match statistics
+    totalMatches: int = Field(0, description="Total matches played")
+    recentMatches: int = Field(0, description="Recent matches (last 10)")
+    
+    # Performance metrics
+    avgAutoPoints: float = Field(0.0, description="Average auto points contribution")
+    avgTeleopPoints: float = Field(0.0, description="Average teleop points contribution")
+    avgEndgamePoints: float = Field(0.0, description="Average endgame points contribution")
+    
+    # Calculation metadata
+    calculationVersion: str = Field("1.0", description="EPA calculation version")
+    dataQuality: str = Field("good", description="Data quality assessment")
+    lastMatchDate: Optional[str] = Field(None, description="Last match date used")
+    
+    # Timestamps
+    calculatedAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    isLatest: bool = Field(True, description="Is this the latest calculation")
+
+class AllianceCompatibility(DynamoDBBaseModel):
+    """Alliance compatibility data"""
+    teamNumber1: int = Field(..., description="First team number")
+    teamNumber2: int = Field(..., description="Second team number")
+    compatibilityScore: float = Field(0.0, description="Compatibility score")
+    combinedEPA: float = Field(0.0, description="Combined EPA")
+    strengthAreas: List[str] = Field(default_factory=list, description="Combined strength areas")
+    complementaryAreas: List[str] = Field(default_factory=list, description="Complementary areas")
+    calculatedAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class EventPrediction(DynamoDBBaseModel):
+    """Event prediction model"""
+    eventCode: str = Field(..., description="Event code")
+    season: int = Field(..., description="Competition season")
+    matchNumber: int = Field(..., description="Match number")
+    redTeams: List[int] = Field(..., description="Red alliance teams")
+    blueTeams: List[int] = Field(..., description="Blue alliance teams")
+    
+    # Prediction data
+    redWinProbability: float = Field(0.0, description="Red alliance win probability")
+    blueWinProbability: float = Field(0.0, description="Blue alliance win probability")
+    predictedRedScore: float = Field(0.0, description="Predicted red score")
+    predictedBlueScore: float = Field(0.0, description="Predicted blue score")
+    
+    # Confidence metrics
+    confidenceLevel: float = Field(0.0, description="Prediction confidence")
+    dataQuality: str = Field("unknown", description="Data quality for prediction")
+    
+    # EPA data used
+    teamEPAs: Dict[str, float] = Field(default_factory=dict, description="Team EPAs used")
+    
+    # Timestamps
+    predictedAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+# CacheEntry removed - no longer using cache table
+
+class SyncStatus(DynamoDBBaseModel):
+    """Sync status tracking with HTTP caching optimization"""
+    syncType: str = Field(..., description="Type of sync (teams, events, matches)")
+    season: int = Field(..., description="Season")
+    lastSyncTime: datetime = Field(..., description="Last successful sync time")
+    nextSyncTime: datetime = Field(..., description="Next scheduled sync time")
+    status: str = Field("pending", description="Sync status")
+    errorMessage: Optional[str] = Field(None, description="Error message if failed")
+    recordsProcessed: int = Field(0, description="Number of records processed")
+    recordsUpdated: int = Field(0, description="Number of records updated")
+    
+    # HTTP Caching Support for bandwidth optimization
+    lastModifiedHeader: Optional[str] = Field(None, description="Last-Modified from API response")
+    ifModifiedSinceUsed: Optional[str] = Field(None, description="If-Modified-Since used in request")
+    fmsOnlyModifiedSinceUsed: Optional[str] = Field(None, description="FMS-OnlyModifiedSince used in request")
+    etag: Optional[str] = Field(None, description="ETag from API response")
+    dataChanged: bool = Field(True, description="Whether data was modified (not 304)")
+    bandwidthSaved: int = Field(0, description="Bytes saved due to conditional requests")
+    
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.isoformat()
+        }
+
+# ApiCacheMetadata removed - HTTP caching metadata now stored in main data models
+
+# Utility functions for data conversion
+def convert_ftc_api_team(api_team: Dict[str, Any], season: int) -> Team:
+    """Convert FTC API team response to Team model"""
+    return Team(
+        teamNumber=api_team.get('teamNumber', 0),
+        season=season,
+        teamName=api_team.get('nameShort', ''),
+        schoolName=api_team.get('nameFull', ''),
+        city=api_team.get('city', ''),
+        state=api_team.get('state', ''),
+        country=api_team.get('country', ''),
+        rookieYear=api_team.get('rookieYear'),
+        website=api_team.get('website')
+    )
+
+def convert_ftc_api_event(api_event: Dict[str, Any], season: int) -> Event:
+    """Convert FTC API event response to Event model"""
+    return Event(
+        eventCode=api_event.get('code', ''),
+        season=season,
+        eventName=api_event.get('name', ''),
+        eventType=api_event.get('type', ''),
+        dateStart=api_event.get('dateStart'),
+        dateEnd=api_event.get('dateEnd'),
+        venue=api_event.get('venue'),
+        address=api_event.get('address'),
+        city=api_event.get('city'),
+        state=api_event.get('state'),
+        country=api_event.get('country'),
+        timezone=api_event.get('timezone'),
+        website=api_event.get('website'),
+        liveStreamUrl=api_event.get('liveStreamUrl'),
+        teamCount=api_event.get('teamCount', 0),
+        matchCount=api_event.get('matchCount', 0)
+    )
+
+def convert_ftc_api_match(api_match: Dict[str, Any], season: int, event_code: str) -> Match:
+    """Convert FTC API match response to Match model"""
+    match_id = f"{season}-{event_code}-{api_match.get('matchNumber', 0)}"
+    
+    # Extract teams
+    teams = []
+    red_teams = []
+    blue_teams = []
+    all_teams = []
+    
+    for team_data in api_match.get('teams', []):
+        team = MatchTeam(
+            teamNumber=team_data.get('teamNumber', 0),
+            station=team_data.get('station', ''),
+            dq=team_data.get('dq', False),
+            noShow=team_data.get('noShow', False),
+            surrogate=team_data.get('surrogate', False)
+        )
+        teams.append(team)
+        
+        team_number = team_data.get('teamNumber', 0)
+        all_teams.append(team_number)
+        
+        if 'Red' in team_data.get('station', ''):
+            red_teams.append(team_number)
+        elif 'Blue' in team_data.get('station', ''):
+            blue_teams.append(team_number)
+    
+    # Extract scores
+    red_score = None
+    blue_score = None
+    
+    if 'scoreRedFinal' in api_match:
+        red_score = MatchScore(
+            alliance='Red',
+            totalPoints=api_match.get('scoreRedFinal', 0),
+            autoPoints=api_match.get('scoreRedAuto', 0),
+            teleopPoints=api_match.get('scoreRedTeleop', 0),
+            endgamePoints=api_match.get('scoreRedEnd', 0),
+            penaltyPoints=api_match.get('scoreRedPenalty', 0)
+        )
+    
+    if 'scoreBlueFinal' in api_match:
+        blue_score = MatchScore(
+            alliance='Blue',
+            totalPoints=api_match.get('scoreBlueFinal', 0),
+            autoPoints=api_match.get('scoreBlueAuto', 0),
+            teleopPoints=api_match.get('scoreBlueTeleop', 0),
+            endgamePoints=api_match.get('scoreBlueEnd', 0),
+            penaltyPoints=api_match.get('scoreBluePenalty', 0)
+        )
+    
+    return Match(
+        matchId=match_id,
+        season=season,
+        eventCode=event_code,
+        matchNumber=api_match.get('matchNumber', 0),
+        description=api_match.get('description', ''),
+        tournamentLevel=api_match.get('tournamentLevel', ''),
+        series=api_match.get('series'),
+        matchName=api_match.get('matchName'),
+        playNumber=api_match.get('playNumber'),
+        fieldNumber=api_match.get('fieldNumber'),
+        startTime=api_match.get('startTime'),
+        actualStartTime=api_match.get('actualStartTime'),
+        postResultTime=api_match.get('postResultTime'),
+        teams=teams,
+        redScore=red_score,
+        blueScore=blue_score,
+        redTeams=red_teams,
+        blueTeams=blue_teams,
+        allTeams=all_teams
+    ) 
