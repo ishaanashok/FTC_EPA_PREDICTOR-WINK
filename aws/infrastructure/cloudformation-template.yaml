@@ -270,6 +270,8 @@ Resources:
       Code:
         S3Bucket: !If [CreateNewBucket, !Ref LambdaDeploymentBucket, !Ref ExistingLambdaDeploymentBucket]
         S3Key: functions/data-sync.zip
+      Layers:
+        - !Ref CommonDependenciesLayer
       Timeout: 900
       MemorySize: 1024
       Environment:
@@ -296,6 +298,8 @@ Resources:
       Code:
         S3Bucket: !If [CreateNewBucket, !Ref LambdaDeploymentBucket, !Ref ExistingLambdaDeploymentBucket]
         S3Key: functions/teams-api.zip
+      Layers:
+        - !Ref CommonDependenciesLayer
       Timeout: 30
       MemorySize: 512
       Environment:
@@ -313,6 +317,8 @@ Resources:
       Code:
         S3Bucket: !If [CreateNewBucket, !Ref LambdaDeploymentBucket, !Ref ExistingLambdaDeploymentBucket]
         S3Key: functions/events-api.zip
+      Layers:
+        - !Ref CommonDependenciesLayer
       Timeout: 30
       MemorySize: 512
       Environment:
@@ -330,6 +336,8 @@ Resources:
       Code:
         S3Bucket: !If [CreateNewBucket, !Ref LambdaDeploymentBucket, !Ref ExistingLambdaDeploymentBucket]
         S3Key: functions/matches-api.zip
+      Layers:
+        - !Ref CommonDependenciesLayer
       Timeout: 30
       MemorySize: 512
       Environment:
@@ -347,6 +355,8 @@ Resources:
       Code:
         S3Bucket: !If [CreateNewBucket, !Ref LambdaDeploymentBucket, !Ref ExistingLambdaDeploymentBucket]
         S3Key: functions/epa-api.zip
+      Layers:
+        - !Ref CommonDependenciesLayer
       Timeout: 60
       MemorySize: 1024
       Environment:
@@ -365,6 +375,8 @@ Resources:
       Code:
         S3Bucket: !If [CreateNewBucket, !Ref LambdaDeploymentBucket, !Ref ExistingLambdaDeploymentBucket]
         S3Key: functions/alliance-matchmaker.zip
+      Layers:
+        - !Ref CommonDependenciesLayer
       Timeout: 60
       MemorySize: 1024
       Environment:
