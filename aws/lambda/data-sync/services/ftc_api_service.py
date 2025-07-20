@@ -129,21 +129,9 @@ class FTCApiService:
                     
                     # Handle success response
                     elif response.status == 200:
-                        try:
-                            print(f"DEBUG: About to read response text for {endpoint}")
-                            response_text = await response.text()
-                            print(f"DEBUG: Response text length: {len(response_text)}")
-                            print(f"DEBUG: First 200 chars: {response_text[:200]}")
-                            
-                            print(f"DEBUG: About to parse JSON")
-                            response_data = json.loads(response_text)
-                            print(f"DEBUG: JSON parsed successfully, type: {type(response_data)}")
-                            
-                            metadata['responseSize'] = len(response_text.encode('utf-8'))
-                        except Exception as e:
-                            print(f"DEBUG: Error in response processing: {e}")
-                            print(f"DEBUG: Error type: {type(e)}")
-                            raise
+                        response_data = await response.json()
+                        response_text = await response.text()
+                        metadata['responseSize'] = len(response_text.encode('utf-8'))
                         
                         # Extract caching headers
                         last_modified = response.headers.get('Last-Modified')
@@ -191,18 +179,57 @@ class FTCApiService:
     async def get_teams(self, season: int, **params) -> Tuple[Optional[List[Dict]], Dict[str, Any]]:
         """Get teams for a season with conditional request support"""
         endpoint = f"/{season}/teams"
-        response, metadata = await self.make_conditional_request(endpoint, params)
-        if response is not None and isinstance(response, dict):
-            response = [response]
-        return response, metadata
+        
+        # Extract conditional request parameters
+        if_modified_since = params.pop('if_modified_since', None)
+        if_none_match = params.pop('if_none_match', None)
+        
+        response, metadata = await self.make_conditional_request(
+            endpoint, 
+            params,
+            if_modified_since=if_modified_since,
+            if_none_match=if_none_match
+        )
+        
+        # Handle response format - FTC API returns {'teams': [...], 'teamCountTotal': ..., ...}
+        if response is None:
+            return None, metadata
+        elif isinstance(response, dict):
+            # Extract teams array from the response
+            teams = response.get('teams', [])
+            if isinstance(teams, list):
+                return teams, metadata
+            else:
+                return None, metadata
+        elif isinstance(response, list):
+            # Fallback if API returns teams directly as a list
+            return response, metadata
+        else:
+            return None, metadata
     
     async def get_events(self, season: int, **params) -> Tuple[Optional[List[Dict]], Dict[str, Any]]:
         """Get events for a season with conditional request support"""
         endpoint = f"/{season}/events"
-        response, metadata = await self.make_conditional_request(endpoint, params)
-        if response is not None and isinstance(response, dict):
-            response = [response]
-        return response, metadata
+        
+        # Extract conditional request parameters
+        if_modified_since = params.pop('if_modified_since', None)
+        if_none_match = params.pop('if_none_match', None)
+        
+        response, metadata = await self.make_conditional_request(
+            endpoint, 
+            params,
+            if_modified_since=if_modified_since,
+            if_none_match=if_none_match
+        )
+        # Ensure response is a list of dicts or None
+        if response is None:
+            return None, metadata
+        elif isinstance(response, dict):
+            return [response], metadata
+        elif isinstance(response, list):
+            return response, metadata
+        else:
+            return None, metadata
     
     async def get_event_matches(self, season: int, event_code: str, 
                                tournament_level: str = "qual", **params) -> Tuple[Optional[List[Dict]], Dict[str, Any]]:
@@ -210,27 +237,75 @@ class FTCApiService:
         endpoint = f"/{season}/matches/{event_code}"
         if tournament_level:
             params['tournamentLevel'] = tournament_level
-        response, metadata = await self.make_conditional_request(endpoint, params)
-        if response is not None and isinstance(response, dict):
-            response = [response]
-        return response, metadata
+            
+        # Extract conditional request parameters
+        if_modified_since = params.pop('if_modified_since', None)
+        if_none_match = params.pop('if_none_match', None)
+        
+        response, metadata = await self.make_conditional_request(
+            endpoint, 
+            params,
+            if_modified_since=if_modified_since,
+            if_none_match=if_none_match
+        )
+        # Ensure response is a list of dicts or None
+        if response is None:
+            return None, metadata
+        elif isinstance(response, dict):
+            return [response], metadata
+        elif isinstance(response, list):
+            return response, metadata
+        else:
+            return None, metadata
     
     async def get_event_rankings(self, season: int, event_code: str, **params) -> Tuple[Optional[List[Dict]], Dict[str, Any]]:
         """Get rankings for an event with conditional request support"""
         endpoint = f"/{season}/rankings/{event_code}"
-        response, metadata = await self.make_conditional_request(endpoint, params)
-        if response is not None and isinstance(response, dict):
-            response = [response]
-        return response, metadata
+        
+        # Extract conditional request parameters
+        if_modified_since = params.pop('if_modified_since', None)
+        if_none_match = params.pop('if_none_match', None)
+        
+        response, metadata = await self.make_conditional_request(
+            endpoint, 
+            params,
+            if_modified_since=if_modified_since,
+            if_none_match=if_none_match
+        )
+        # Ensure response is a list of dicts or None
+        if response is None:
+            return None, metadata
+        elif isinstance(response, dict):
+            return [response], metadata
+        elif isinstance(response, list):
+            return response, metadata
+        else:
+            return None, metadata
     
     async def get_event_teams(self, season: int, event_code: str, **params) -> Tuple[Optional[List[Dict]], Dict[str, Any]]:
         """Get teams for an event with conditional request support"""
         endpoint = f"/{season}/teams"
         params['eventCode'] = event_code
-        response, metadata = await self.make_conditional_request(endpoint, params)
-        if response is not None and isinstance(response, dict):
-            response = [response]
-        return response, metadata
+        
+        # Extract conditional request parameters
+        if_modified_since = params.pop('if_modified_since', None)
+        if_none_match = params.pop('if_none_match', None)
+        
+        response, metadata = await self.make_conditional_request(
+            endpoint, 
+            params,
+            if_modified_since=if_modified_since,
+            if_none_match=if_none_match
+        )
+        # Ensure response is a list of dicts or None
+        if response is None:
+            return None, metadata
+        elif isinstance(response, dict):
+            return [response], metadata
+        elif isinstance(response, list):
+            return response, metadata
+        else:
+            return None, metadata
     
     async def batch_get_event_data(self, season: int, event_codes: List[str], 
                                   if_modified_since: Optional[str] = None) -> Dict[str, Dict]:

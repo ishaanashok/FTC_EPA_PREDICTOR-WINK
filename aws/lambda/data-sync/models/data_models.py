@@ -227,9 +227,6 @@ class SyncStatus(DynamoDBBaseModel):
 def convert_ftc_api_team(api_team: Dict[str, Any], season: int) -> Team:
     """Convert FTC API team response to Team model with comprehensive None handling"""
     
-    # Add detailed logging for debugging
-    print(f"DEBUG: convert_ftc_api_team called with season={season}, api_team keys: {list(api_team.keys()) if api_team else 'None'}")
-    
     # Validate and convert season parameter
     if season is None:
         raise ValueError(f"Invalid season parameter: season is None")
@@ -267,41 +264,17 @@ def convert_ftc_api_team(api_team: Dict[str, Any], season: int) -> Team:
             return ''
         return str(value).strip()
     
-    # Create team with detailed error handling
-    print(f"DEBUG: Creating Team with teamNumber={team_number_int}, season={season_int}")
-    
-    # Ensure all fields are properly typed for pydantic v1
-    team_data = {
-        'teamNumber': team_number_int,
-        'season': season_int,
-        'teamName': safe_string(api_team.get('nameShort')),
-        'schoolName': safe_string(api_team.get('nameFull')),
-        'city': safe_string(api_team.get('city')),
-        'state': safe_string(api_team.get('state')),
-        'country': safe_string(api_team.get('country')),
-        'rookieYear': rookie_year_int,  # Can be None
-        'website': safe_string(api_team.get('website')) if api_team.get('website') else None,
-        # Explicitly set the datetime field to avoid any issues
-        'lastUpdated': datetime.now(timezone.utc),
-        # Set all optional caching fields to None explicitly
-        'lastModified': None,
-        'etag': None,
-        'apiLastModified': None,
-        'dataVersion': None,
-        'dataHash': None
-    }
-    
-    print(f"DEBUG: Team data prepared: {team_data}")
-    
-    try:
-        team = Team(**team_data)
-        print(f"DEBUG: Team created successfully for team {team_number_int}")
-        return team
-    except Exception as e:
-        print(f"DEBUG: Team creation failed with error: {e}")
-        print(f"DEBUG: Error type: {type(e)}")
-        print(f"DEBUG: Input data: {team_data}")
-        raise ValueError(f"Team creation failed for team {team_number_int}: {e}")
+    return Team(
+        teamNumber=team_number_int,
+        season=season_int,
+        teamName=safe_string(api_team.get('nameShort')),
+        schoolName=safe_string(api_team.get('nameFull')),
+        city=safe_string(api_team.get('city')),
+        state=safe_string(api_team.get('state')),
+        country=safe_string(api_team.get('country')),
+        rookieYear=rookie_year_int,
+        website=safe_string(api_team.get('website')) if api_team.get('website') else None
+    )
 
 def convert_ftc_api_event(api_event: Dict[str, Any], season: int) -> Event:
     """Convert FTC API event response to Event model with comprehensive None handling"""
@@ -351,14 +324,7 @@ def convert_ftc_api_event(api_event: Dict[str, Any], season: int) -> Event:
         website=safe_string(api_event.get('website')) if api_event.get('website') else None,
         liveStreamUrl=safe_string(api_event.get('liveStreamUrl')) if api_event.get('liveStreamUrl') else None,
         teamCount=safe_int(api_event.get('teamCount')),
-        matchCount=safe_int(api_event.get('matchCount')),
-        lastModified=None,
-        etag=None,
-        apiLastModified=None,
-        dataVersion=None,
-        dataHash=None,
-        matchesLastModified=None,
-        rankingsLastModified=None
+        matchCount=safe_int(api_event.get('matchCount'))
     )
 
 def convert_ftc_api_match(api_match: Dict[str, Any], season: int, event_code: str) -> Match:
@@ -432,10 +398,5 @@ def convert_ftc_api_match(api_match: Dict[str, Any], season: int, event_code: st
         blueScore=blue_score,
         redTeams=red_teams,
         blueTeams=blue_teams,
-        allTeams=all_teams,
-        lastModified=None,
-        etag=None,
-        apiLastModified=None,
-        dataVersion=None,
-        dataHash=None
+        allTeams=all_teams
     ) 

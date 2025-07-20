@@ -92,20 +92,43 @@ class DataSyncService:
         except Exception as e:
             logger.error(f"Error updating sync status: {str(e)}")
     
-    async def sync_teams(self, season: int = None) -> Dict[str, Any]:
+    async def sync_teams(self, season: Optional[int] = None) -> Dict[str, Any]:
         """Sync teams data with HTTP caching optimization"""
         if season is None:
             season = self.current_season
         
-        sync_status = SyncStatus(
-            syncType="teams",
-            season=season,
-            lastSyncTime=datetime.now(timezone.utc),
-            nextSyncTime=datetime.now(timezone.utc),
-            status="in_progress"
-        )
+        print(f"DEBUG: sync_teams called with season={season}, type={type(season)}")
         
         try:
+            sync_status = SyncStatus(
+                syncType="teams",
+                season=season,
+                lastSyncTime=datetime.now(timezone.utc),
+                nextSyncTime=datetime.now(timezone.utc),
+                status="in_progress",
+                errorMessage=None,
+                recordsProcessed=0,
+                recordsUpdated=0,
+                lastModifiedHeader=None,
+                ifModifiedSinceUsed=None,
+                fmsOnlyModifiedSinceUsed=None,
+                etag=None,
+                dataChanged=True,
+                bandwidthSaved=0
+            )
+            print(f"DEBUG: SyncStatus created successfully")
+        except Exception as e:
+            print(f"DEBUG: SyncStatus creation failed: {e}")
+            print(f"DEBUG: season value: {season}, type: {type(season)}")
+            raise ValueError(f"SyncStatus creation failed with season={season}: {e}")
+        
+        try:
+            # Ensure FTC API is initialized
+            if self.ftc_api is None:
+                await self.initialize()
+            if self.ftc_api is None:
+                raise RuntimeError("FTC API service is not initialized after initialization attempt.")
+
             # Get last sync status to retrieve caching headers
             last_sync = await self.get_sync_status("teams", season)
             
@@ -143,7 +166,7 @@ class DataSyncService:
                 }
             
             # Process teams data
-            teams_list = teams_data.get('teams', []) if teams_data else []
+            teams_list = teams_data if teams_data else []
             teams_processed = 0
             teams_updated = 0
             
@@ -159,7 +182,7 @@ class DataSyncService:
                     team.dataHash = self._calculate_data_hash(team_data)
                     
                     # Check if team exists and needs updating
-                    existing_team = await self.db_service.get_team(team.teamNumber, season)
+                    existing_team = self.db_service.get_team(team.teamNumber, season)
                     
                     should_update = True
                     if existing_team:
@@ -169,7 +192,7 @@ class DataSyncService:
                     
                     if should_update:
                         # Save to DynamoDB
-                        await self.db_service.teams_table.put_item(
+                        self.db_service.teams_table.put_item(
                             Item=team.to_dynamodb_item()
                         )
                         teams_updated += 1
@@ -205,7 +228,7 @@ class DataSyncService:
             logger.error(f"Teams sync failed: {str(e)}")
             raise
     
-    async def sync_events(self, season: int = None) -> Dict[str, Any]:
+    async def sync_events(self, season: Optional[int] = None) -> Dict[str, Any]:
         """Sync events data with HTTP caching optimization"""
         if season is None:
             season = self.current_season
@@ -215,10 +238,25 @@ class DataSyncService:
             season=season,
             lastSyncTime=datetime.now(timezone.utc),
             nextSyncTime=datetime.now(timezone.utc),
-            status="in_progress"
+            status="in_progress",
+            errorMessage=None,
+            recordsProcessed=0,
+            recordsUpdated=0,
+            lastModifiedHeader=None,
+            ifModifiedSinceUsed=None,
+            fmsOnlyModifiedSinceUsed=None,
+            etag=None,
+            dataChanged=True,
+            bandwidthSaved=0
         )
         
         try:
+            # Ensure FTC API is initialized
+            if self.ftc_api is None:
+                await self.initialize()
+            if self.ftc_api is None:
+                raise RuntimeError("FTC API service is not initialized after initialization attempt.")
+
             # Get last sync status to retrieve caching headers
             last_sync = await self.get_sync_status("events", season)
             
@@ -256,7 +294,7 @@ class DataSyncService:
                 }
             
             # Process events data
-            events_list = events_data.get('events', []) if events_data else []
+            events_list = events_data if events_data else []
             events_processed = 0
             events_updated = 0
             
@@ -318,12 +356,18 @@ class DataSyncService:
             logger.error(f"Events sync failed: {str(e)}")
             raise
     
-    async def sync_matches_for_event(self, event_code: str, season: int = None) -> Dict[str, Any]:
+    async def sync_matches_for_event(self, event_code: str, season: Optional[int] = None) -> Dict[str, Any]:
         """Sync matches for a specific event with HTTP caching optimization"""
         if season is None:
             season = self.current_season
         
         try:
+            # Ensure FTC API is initialized
+            if self.ftc_api is None:
+                await self.initialize()
+            if self.ftc_api is None:
+                raise RuntimeError("FTC API service is not initialized after initialization attempt.")
+
             # Get last sync status to retrieve caching headers
             last_sync = await self.get_sync_status(f"matches_{event_code}", season)
             
@@ -347,7 +391,7 @@ class DataSyncService:
             
             # Process qualification matches
             if qual_matches_data and qual_metadata.get('dataChanged', True):
-                qual_matches_list = qual_matches_data.get('matches', [])
+                qual_matches_list = qual_matches_data
                 
                 for match_data in qual_matches_list:
                     try:
@@ -384,7 +428,7 @@ class DataSyncService:
             
             # Process playoff matches
             if playoff_matches_data and playoff_metadata.get('dataChanged', True):
-                playoff_matches_list = playoff_matches_data.get('matches', [])
+                playoff_matches_list = playoff_matches_data
                 
                 for match_data in playoff_matches_list:
                     try:
@@ -434,7 +478,7 @@ class DataSyncService:
             logger.error(f"Matches sync failed for event {event_code}: {str(e)}")
             raise
     
-    async def sync_all_data(self, season: int = None) -> Dict[str, Any]:
+    async def sync_all_data(self, season: Optional[int] = None) -> Dict[str, Any]:
         """Sync all data with change detection for EPA updates"""
         if season is None:
             season = self.current_season
@@ -446,9 +490,15 @@ class DataSyncService:
             teams_result = await self.sync_teams(season)
             events_result = await self.sync_events(season)
             
+            # Ensure FTC API is initialized
+            if self.ftc_api is None:
+                await self.initialize()
+            if self.ftc_api is None:
+                raise RuntimeError("FTC API service is not initialized after initialization attempt.")
+
             # Get active events to sync matches
             events_data, _ = await self.ftc_api.get_events(season)
-            active_events = events_data.get('events', []) if events_data else []
+            active_events = events_data if events_data else []
             
             matches_results = []
             total_matches_processed = 0
@@ -515,12 +565,17 @@ async def lambda_handler(event, context):
     )
     
     try:
+        # Ensure FTC API is initialized before any sync calls
         await sync_service.initialize()
         
         # Extract parameters from event
         sync_type = event.get('syncType', 'all')
         season = event.get('season', 2024)
         
+        # Check if ftc_api is initialized
+        if sync_service.ftc_api is None:
+            raise RuntimeError("FTC API service is not initialized.")
+
         if sync_type == 'teams':
             result = await sync_service.sync_teams(season)
         elif sync_type == 'events':

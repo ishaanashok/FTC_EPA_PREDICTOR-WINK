@@ -157,10 +157,10 @@ build_lambda_function() {
     # Install dependencies directly in the function package
     log "Installing dependencies for ${func_name}..."
     cat > "build/lambda/${func_name}/requirements.txt" << EOF
-pydantic==2.5.0
-aiohttp==3.9.0
-python-dotenv==1.0.0
-typing-extensions
+pydantic>=1.10.0,<2.0.0
+aiohttp>=3.9.1
+python-dotenv>=1.0.0
+typing-extensions>=4.8.0
 EOF
     
     # Install dependencies directly in the function directory

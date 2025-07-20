@@ -135,14 +135,13 @@ build_lambda_functions() {
     
     # Copy requirements and install dependencies
     cat > build/layers/common/requirements.txt << EOF
-boto3==1.34.0
-botocore==1.34.0
-pydantic==2.5.0
-aiohttp==3.9.0
-python-dotenv==1.0.0
-numpy==1.24.3
-asyncio
-typing-extensions
+boto3>=1.34.0
+botocore>=1.34.0
+pydantic>=1.10.0,<2.0.0
+aiohttp>=3.9.1
+python-dotenv>=1.0.0
+requests>=2.31.0
+typing-extensions>=4.8.0
 EOF
     
     # Install dependencies
@@ -182,10 +181,11 @@ build_lambda_function() {
         create_basic_lambda_function "${func_name}"
     fi
     
-    # Copy shared services
+    # Copy shared services and models
     mkdir -p "build/lambda/${func_name}/services"
+    mkdir -p "build/lambda/${func_name}/models"
     cp -r aws/services/* "build/lambda/${func_name}/services/" 2>/dev/null || true
-    cp -r aws/models/* "build/lambda/${func_name}/" 2>/dev/null || true
+    cp -r aws/models/* "build/lambda/${func_name}/models/" 2>/dev/null || true
     
     # Create deployment package
     cd "build/lambda/${func_name}"

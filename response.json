@@ -1,1 +1,1 @@
-{"errorMessage": "Syntax error in module 'lambda_function': invalid syntax (base_events.py, line 296)", "errorType": "Runtime.UserCodeSyntaxError", "requestId": "", "stackTrace": ["  File \"/opt/python/asyncio/base_events.py\" Line 296\n            future = tasks.async(future, loop=self)\n"]}
+{"statusCode": 500, "body": "{\"error\": \"Invalid variable type: value should be str, int or float, got None of type <class 'NoneType'>\", \"success\": false}"}
