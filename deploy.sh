@@ -90,13 +90,13 @@ setup_s3_bucket() {
         fi
         
         S3_BUCKET="${EXISTING_BUCKET}"
-        CREATE_NEW_BUCKET=false
+        CREATE_NEW_BUCKET="false"
         
     else
         log "Creating new S3 bucket for Lambda deployments..."
         
         S3_BUCKET="${S3_BUCKET_PREFIX}-$(aws sts get-caller-identity --query Account --output text)"
-        CREATE_NEW_BUCKET=true
+        CREATE_NEW_BUCKET="true"
         
         # Check if bucket already exists
         if aws s3api head-bucket --bucket "${S3_BUCKET}" 2>/dev/null; then
@@ -120,6 +120,7 @@ setup_s3_bucket() {
     fi
     
     log "S3 bucket configured: ${S3_BUCKET}"
+    log "Create new bucket flag: ${CREATE_NEW_BUCKET}"
 }
 
 # Build and package Lambda functions
@@ -269,6 +270,14 @@ deploy_infrastructure() {
     if [[ -n "${EXISTING_BUCKET}" ]]; then
         CF_PARAMETERS+=("ParameterKey=ExistingLambdaDeploymentBucket,ParameterValue=${EXISTING_BUCKET}")
     fi
+    
+    log "CloudFormation Parameters:"
+    log "- Environment: ${ENVIRONMENT}"
+    log "- CreateLambdaDeploymentBucket: ${CREATE_NEW_BUCKET}"
+    if [[ -n "${EXISTING_BUCKET}" ]]; then
+        log "- ExistingLambdaDeploymentBucket: ${EXISTING_BUCKET}"
+    fi
+    log "- FTC API credentials provided"
     
     # Check if stack exists
     if aws cloudformation describe-stacks --stack-name "${STACK_NAME}" --region "${AWS_REGION}" &>/dev/null; then
