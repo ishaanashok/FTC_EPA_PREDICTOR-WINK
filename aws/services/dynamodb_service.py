@@ -17,6 +17,7 @@ class DynamoDBService:
         self.environment = environment
         
         # Initialize tables
+        # Ensure self.dynamodb is a boto3 DynamoDB resource, which has the Table attribute
         self.teams_table = self.dynamodb.Table(f'FTC_Teams_{environment}')
         self.events_table = self.dynamodb.Table(f'FTC_Events_{environment}')
         self.matches_table = self.dynamodb.Table(f'FTC_Matches_{environment}')
@@ -36,7 +37,10 @@ class DynamoDBService:
                 return value.isoformat()
             return value
         
-        return convert_value(item)
+        result = convert_value(item)
+        if not isinstance(result, dict):
+            raise TypeError("convert_to_dynamodb_item must return a dictionary")
+        return result
     
     def convert_from_dynamodb_item(self, item: Dict[str, Any]) -> Dict[str, Any]:
         """Convert DynamoDB item to regular Python types"""
@@ -49,7 +53,10 @@ class DynamoDBService:
                 return [convert_value(v) for v in value]
             return value
         
-        return convert_value(item)
+        result = convert_value(item)
+        if not isinstance(result, dict):
+            raise TypeError("convert_from_dynamodb_item must return a dictionary")
+        return result
     
     # Team operations
     async def get_team(self, team_number: int, season: int) -> Optional[Dict[str, Any]]:
@@ -126,14 +133,18 @@ class DynamoDBService:
             logger.error(f"Error getting event {event_code} for season {season}: {str(e)}")
             return None
     
-    async def get_events_by_season(self, season: int, limit: int = 100) -> List[Dict[str, Any]]:
+    async def get_events_by_season(self, season: int, limit: Optional[int] = None) -> List[Dict[str, Any]]:
         """Get all events for a season"""
         try:
-            response = self.events_table.query(
-                IndexName='SeasonIndex',
-                KeyConditionExpression=Key('season').eq(season),
-                Limit=limit
-            )
+            query_kwargs = {
+                'IndexName': 'SeasonIndex',
+                'KeyConditionExpression': Key('season').eq(season)
+            }
+            
+            if limit is not None:
+                query_kwargs['Limit'] = limit
+            
+            response = self.events_table.query(**query_kwargs)
             
             events = []
             for item in response.get('Items', []):
@@ -162,7 +173,7 @@ class DynamoDBService:
             return None
     
     async def get_matches_by_event(self, season: int, event_code: str, 
-                                  tournament_level: str = None) -> List[Dict[str, Any]]:
+                                  tournament_level: Optional[str] = None) -> List[Dict[str, Any]]:
         """Get matches for a specific event"""
         try:
             # Use GSI to query by event

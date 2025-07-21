@@ -5,7 +5,6 @@ import 'core/config/app_config.dart';
 import 'presentation/pages/home_page.dart';
 import 'presentation/pages/teams_page.dart';
 import 'presentation/pages/events_page.dart';
-import 'package:go_router/go_router.dart';
 
 void main() {
   // Validate configuration
@@ -28,30 +27,17 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp.router(
-      title: AppConfig.appName,
+    return MaterialApp(
+      title: 'FTC Predictor',
       theme: AppTheme.lightTheme,
       darkTheme: AppTheme.darkTheme,
-      themeMode: ThemeMode.dark, // Default to dark theme
-      routerConfig: _router,
+      themeMode: ThemeMode.dark,
+      home: const HomePage(),
+      routes: {
+        '/teams': (context) => const TeamsPage(),
+        '/events': (context) => const EventsPage(),
+      },
       debugShowCheckedModeBanner: false,
     );
   }
 }
-
-final GoRouter _router = GoRouter(
-  routes: [
-    GoRoute(
-      path: '/',
-      builder: (context, state) => const HomePage(),
-    ),
-    GoRoute(
-      path: '/teams',
-      builder: (context, state) => const TeamsPage(),
-    ),
-    GoRoute(
-      path: '/events',
-      builder: (context, state) => const EventsPage(),
-    ),
-  ],
-);

@@ -26,7 +26,7 @@ class EventsApiService:
         self.db_service = DynamoDBService(environment)
     
     async def get_events(self, season: int, event_code: Optional[str] = None, 
-                        limit: int = 100) -> Dict[str, Any]:
+                        limit: Optional[int] = None) -> Dict[str, Any]:
         """Get events data from DynamoDB"""
         try:
             if event_code:
@@ -49,12 +49,14 @@ class EventsApiService:
             else:
                 # Get all events for season
                 events = await self.db_service.get_events_by_season(season, limit)
-                return {
+                response = {
                     "success": True,
                     "events": events,
-                    "total": len(events),
-                    "limit": limit
+                    "total": len(events)
                 }
+                if limit is not None:
+                    response["limit"] = limit
+                return response
                 
         except Exception as e:
             logger.error(f"Error getting events: {str(e)}")
@@ -135,7 +137,8 @@ async def lambda_handler(event, context):
             else:
                 # Get events with optional filters
                 event_code_query = query_parameters.get('eventCode')
-                limit = int(query_parameters.get('limit', 100))
+                limit_param = query_parameters.get('limit')
+                limit = int(limit_param) if limit_param else None
                 
                 result = await api_service.get_events(
                     season=season,
