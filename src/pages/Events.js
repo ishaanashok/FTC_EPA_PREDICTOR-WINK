@@ -111,12 +111,12 @@ function Events() {
 
   const filteredEvents = events.filter(event => {
     // Exclude Workshop and Scrimmage events
-    if (event.typeName === 'Workshop' || event.typeName === 'Scrimmage') {
+    if (event.eventType === 'Workshop' || event.eventType === 'Scrimmage') {
       return false;
     }
 
     const matchesSearch = 
-      (event.name?.toLowerCase() || '').includes(searchText.toLowerCase()) ||
+      (event.eventName?.toLowerCase() || '').includes(searchText.toLowerCase()) ||
       (event.city?.toLowerCase() || '').includes(searchText.toLowerCase()) ||
       (event.state?.toLowerCase() || '').includes(searchText.toLowerCase());
     
@@ -201,18 +201,18 @@ function Events() {
                   </Grid>
                 ) : (
                   filteredEvents.map((event) => (
-                    <Grid item xs={12} sm={6} md={4} key={`2024-${event.code}`}>
+                    <Grid item xs={12} sm={6} md={4} key={`2024-${event.eventCode}`}>
                       <Card sx={{ height: '100%' }}>
-                        <CardActionArea onClick={() => navigate(`/events/2024/${event.code}`)}>
+                        <CardActionArea onClick={() => navigate(`/events/2024/${event.eventCode}`)}>
                           <CardContent>
                             <Typography variant="h6" gutterBottom>
-                              {event.name}
+                              {event.eventName}
                             </Typography>
                             <Typography color="textSecondary" gutterBottom>
                               {new Date(event.dateStart).toLocaleDateString()} - {new Date(event.dateEnd).toLocaleDateString()}
                             </Typography>
                             <Typography gutterBottom>
-                              {event.city}, {event.stateprov}
+                              {event.city}, {event.state}
                             </Typography>
                             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 2 }}>
                               <Chip
@@ -221,7 +221,7 @@ function Events() {
                                 size="small"
                               />
                               <Typography variant="body2" color="textSecondary">
-                                {event.type}
+                                {event.eventType}
                               </Typography>
                             </Box>
                           </CardContent>

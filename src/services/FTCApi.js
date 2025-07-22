@@ -1,11 +1,12 @@
 import axios from 'axios';
+import config from '../config.js';
 
-const BASE_URL = 'http://localhost:8000/api';
+const BASE_URL = config.awsApi.baseUrl;
 
 class FTCApi {
     constructor() {
         this.axiosInstance = axios.create({
-            baseURL: 'http://localhost:8000/api',
+            baseURL: BASE_URL,
             headers: {
                 'Content-Type': 'application/json',
                 'Accept': 'application/json'
@@ -19,7 +20,7 @@ class FTCApi {
             const response = await this.axiosInstance.get(endpoint, { params });
             return response.data;
         } catch (error) {
-            console.error('FTC API Error:', error);
+            console.error('AWS API Error:', error);
             throw error;
         }
     }
@@ -61,11 +62,17 @@ class FTCApi {
     }
 
     async getEvents(season, eventCode = null, teamNumber = null) {
-        return this.request(`/events/${season}`, { eventCode, teamNumber });
+        // Update to match AWS API endpoint format
+        const queryParams = { season };
+        if (eventCode) queryParams.eventCode = eventCode;
+        if (teamNumber) queryParams.teamNumber = teamNumber;
+        return this.request('/api/events', queryParams);
     }
 
     async getTeams(season, params = {}) {
-        return this.request(`/teams/${season}`, params);
+        // Update to match AWS API endpoint format
+        const queryParams = { season, ...params };
+        return this.request('/api/teams', queryParams);
     }
 
     // Remove getTeamEPA as it's no longer needed
