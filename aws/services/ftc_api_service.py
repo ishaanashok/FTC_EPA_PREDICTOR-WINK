@@ -189,24 +189,186 @@ class FTCApiService:
         raise Exception(f"Failed to make request to {endpoint} after {max_retries} attempts")
     
     async def get_teams(self, season: int, if_modified_since: Optional[str] = None, **params) -> Tuple[Optional[List[Dict]], Dict[str, Any]]:
-        """Get teams for a season with conditional request support"""
+        """Get ALL teams for a season with pagination support and conditional request support"""
         endpoint = f"/{season}/teams"
-        response, metadata = await self.make_conditional_request(
-            endpoint, params, if_modified_since=if_modified_since
-        )
-        if response is not None and isinstance(response, dict):
-            response = [response]
-        return response, metadata
+        
+        all_teams = []
+        page = 1
+        total_count = 0
+        combined_metadata = {
+            'endpoint': endpoint,
+            'dataChanged': True,
+            'responseSize': 0,
+            'totalPages': 0,
+            'totalRecords': 0,
+            'lastModified': None,
+            'etag': None
+        }
+        
+        while True:
+            # Add pagination parameters
+            page_params = params.copy() if params else {}
+            page_params['page'] = page
+            
+            logger.info(f"[FTC API] Fetching teams page {page} for season {season}")
+            
+            response, metadata = await self.make_conditional_request(
+                endpoint, page_params, if_modified_since=if_modified_since
+            )
+            
+            # If 304 Not Modified on first page, return early
+            if response is None and page == 1:
+                combined_metadata.update(metadata)
+                combined_metadata['dataChanged'] = False
+                return None, combined_metadata
+            
+            # If we get None response on subsequent pages, we might have hit the end
+            if response is None:
+                logger.info(f"[FTC API] No more data at page {page}, stopping pagination")
+                break
+            
+            # Handle response structure - FTC API returns data in 'teams' field
+            if isinstance(response, dict):
+                teams_data = response.get('teams', [])
+                total_count = response.get('totalCount', 0)
+                page_count = response.get('pageCount', 1)
+                current_page = response.get('pageCurrent', page)
+                
+                combined_metadata['totalPages'] = page_count
+                combined_metadata['totalRecords'] = total_count
+                
+                logger.info(f"[FTC API] Page {current_page}/{page_count}: {len(teams_data)} teams, total: {total_count}")
+            elif isinstance(response, list):
+                # If response is already a list, assume it's the teams data
+                teams_data = response
+                logger.info(f"[FTC API] Page {page}: {len(teams_data)} teams (list format)")
+            else:
+                logger.warning(f"[FTC API] Unexpected response format: {type(response)}")
+                teams_data = []
+            
+            # Add teams to our collection
+            if teams_data:
+                all_teams.extend(teams_data)
+                
+                # Update combined metadata
+                combined_metadata['responseSize'] += metadata.get('responseSize', 0)
+                if metadata.get('lastModified'):
+                    combined_metadata['lastModified'] = metadata['lastModified']
+                if metadata.get('etag'):
+                    combined_metadata['etag'] = metadata['etag']
+            
+            # Check if we have more pages
+            if isinstance(response, dict) and 'pageCount' in response:
+                if page >= response['pageCount']:
+                    logger.info(f"[FTC API] Reached last page {page}/{response['pageCount']}")
+                    break
+            elif len(teams_data) == 0:
+                # If no teams returned, we've reached the end
+                logger.info(f"[FTC API] No teams returned on page {page}, stopping")
+                break
+            
+            page += 1
+            
+            # Safety check to prevent infinite loops
+            if page > 100:  # Reasonable upper limit
+                logger.warning(f"[FTC API] Reached page limit (100), stopping pagination")
+                break
+        
+        logger.info(f"[FTC API] Teams sync complete: {len(all_teams)} total teams collected across {page-1} pages")
+        combined_metadata['totalRecords'] = len(all_teams)
+        
+        return all_teams, combined_metadata
     
     async def get_events(self, season: int, if_modified_since: Optional[str] = None, **params) -> Tuple[Optional[List[Dict]], Dict[str, Any]]:
-        """Get events for a season with conditional request support"""
+        """Get ALL events for a season with pagination support and conditional request support"""
         endpoint = f"/{season}/events"
-        response, metadata = await self.make_conditional_request(
-            endpoint, params, if_modified_since=if_modified_since
-        )
-        if response is not None and isinstance(response, dict):
-            response = [response]
-        return response, metadata
+        
+        all_events = []
+        page = 1
+        total_count = 0
+        combined_metadata = {
+            'endpoint': endpoint,
+            'dataChanged': True,
+            'responseSize': 0,
+            'totalPages': 0,
+            'totalRecords': 0,
+            'lastModified': None,
+            'etag': None
+        }
+        
+        while True:
+            # Add pagination parameters
+            page_params = params.copy() if params else {}
+            page_params['page'] = page
+            
+            logger.info(f"[FTC API] Fetching events page {page} for season {season}")
+            
+            response, metadata = await self.make_conditional_request(
+                endpoint, page_params, if_modified_since=if_modified_since
+            )
+            
+            # If 304 Not Modified on first page, return early
+            if response is None and page == 1:
+                combined_metadata.update(metadata)
+                combined_metadata['dataChanged'] = False
+                return None, combined_metadata
+            
+            # If we get None response on subsequent pages, we might have hit the end
+            if response is None:
+                logger.info(f"[FTC API] No more data at page {page}, stopping pagination")
+                break
+            
+            # Handle response structure - FTC API returns data in 'events' field
+            if isinstance(response, dict):
+                events_data = response.get('events', [])
+                total_count = response.get('totalCount', 0)
+                page_count = response.get('pageCount', 1)
+                current_page = response.get('pageCurrent', page)
+                
+                combined_metadata['totalPages'] = page_count
+                combined_metadata['totalRecords'] = total_count
+                
+                logger.info(f"[FTC API] Page {current_page}/{page_count}: {len(events_data)} events, total: {total_count}")
+            elif isinstance(response, list):
+                # If response is already a list, assume it's the events data
+                events_data = response
+                logger.info(f"[FTC API] Page {page}: {len(events_data)} events (list format)")
+            else:
+                logger.warning(f"[FTC API] Unexpected response format: {type(response)}")
+                events_data = []
+            
+            # Add events to our collection
+            if events_data:
+                all_events.extend(events_data)
+                
+                # Update combined metadata
+                combined_metadata['responseSize'] += metadata.get('responseSize', 0)
+                if metadata.get('lastModified'):
+                    combined_metadata['lastModified'] = metadata['lastModified']
+                if metadata.get('etag'):
+                    combined_metadata['etag'] = metadata['etag']
+            
+            # Check if we have more pages
+            if isinstance(response, dict) and 'pageCount' in response:
+                if page >= response['pageCount']:
+                    logger.info(f"[FTC API] Reached last page {page}/{response['pageCount']}")
+                    break
+            elif len(events_data) == 0:
+                # If no events returned, we've reached the end
+                logger.info(f"[FTC API] No events returned on page {page}, stopping")
+                break
+            
+            page += 1
+            
+            # Safety check to prevent infinite loops
+            if page > 100:  # Reasonable upper limit
+                logger.warning(f"[FTC API] Reached page limit (100), stopping pagination")
+                break
+        
+        logger.info(f"[FTC API] Events sync complete: {len(all_events)} total events collected across {page-1} pages")
+        combined_metadata['totalRecords'] = len(all_events)
+        
+        return all_events, combined_metadata
     
     async def get_event_matches(self, season: int, event_code: str, 
                                tournament_level: str = "qual", 

@@ -170,6 +170,9 @@ class DataSyncService:
             teams_processed = 0
             teams_updated = 0
             
+            # Process teams in batches for better efficiency
+            processed_teams = []
+            
             for team_data in teams_list:
                 try:
                     # Convert API data to model
@@ -182,7 +185,7 @@ class DataSyncService:
                     team.dataHash = self._calculate_data_hash(team_data)
                     
                     # Check if team exists and needs updating
-                    existing_team = self.db_service.get_team(team.teamNumber, season)
+                    existing_team = await self.db_service.get_team(team.teamNumber, season)
                     
                     should_update = True
                     if existing_team:
@@ -191,10 +194,8 @@ class DataSyncService:
                             should_update = False
                     
                     if should_update:
-                        # Save to DynamoDB
-                        self.db_service.teams_table.put_item(
-                            Item=team.to_dynamodb_item()
-                        )
+                        # Add to batch for processing
+                        processed_teams.append(team.to_dynamodb_item())
                         teams_updated += 1
                     
                     teams_processed += 1
@@ -202,6 +203,21 @@ class DataSyncService:
                 except Exception as e:
                     logger.error(f"Error processing team {team_data.get('teamNumber', 'unknown')}: {str(e)}")
                     continue
+            
+            # Batch save teams to DynamoDB
+            if processed_teams:
+                try:
+                    await self.db_service.batch_save_teams(processed_teams)
+                    logger.info(f"Successfully saved {len(processed_teams)} teams to DynamoDB")
+                except Exception as e:
+                    logger.error(f"Error batch saving teams: {str(e)}")
+                    # Fall back to individual saves
+                    for team_item in processed_teams:
+                        try:
+                            self.db_service.teams_table.put_item(Item=team_item)
+                        except Exception as save_error:
+                            logger.error(f"Error saving individual team {team_item.get('teamNumber', 'unknown')}: {str(save_error)}")
+                            teams_updated -= 1  # Adjust count for failed saves
             
             sync_status.status = "completed"
             sync_status.recordsProcessed = teams_processed
