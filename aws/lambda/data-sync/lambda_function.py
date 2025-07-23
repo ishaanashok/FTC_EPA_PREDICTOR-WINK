@@ -478,6 +478,59 @@ class DataSyncService:
             logger.error(f"Matches sync failed for event {event_code}: {str(e)}")
             raise
     
+    async def sync_matches(self, season: Optional[int] = None) -> Dict[str, Any]:
+        """Sync matches for all active events in the season"""
+        if season is None:
+            season = self.current_season
+        
+        logger.info(f"Starting matches sync for season {season}")
+        
+        try:
+            # Ensure FTC API is initialized
+            if self.ftc_api is None:
+                await self.initialize()
+            if self.ftc_api is None:
+                raise RuntimeError("FTC API service is not initialized after initialization attempt.")
+
+            # Get active events to sync matches
+            events_data, _ = await self.ftc_api.get_events(season)
+            active_events = events_data if events_data else []
+            
+            matches_results = []
+            total_matches_processed = 0
+            total_matches_updated = 0
+            
+            for event_data in active_events:
+                event_code = event_data.get('code')
+                if event_code:
+                    try:
+                        match_result = await self.sync_matches_for_event(event_code, season)
+                        matches_results.append(match_result)
+                        total_matches_processed += match_result.get('recordsProcessed', 0)
+                        total_matches_updated += match_result.get('recordsUpdated', 0)
+                    except Exception as e:
+                        logger.error(f"Error syncing matches for event {event_code}: {str(e)}")
+            
+            total_bandwidth_saved = sum(r.get('bandwidthSaved', 0) for r in matches_results)
+            
+            logger.info(f"Matches sync completed for season {season}")
+            
+            return {
+                "success": True,
+                "season": season,
+                "matches": {
+                    "totalProcessed": total_matches_processed,
+                    "totalUpdated": total_matches_updated,
+                    "eventResults": matches_results
+                },
+                "totalBandwidthSaved": total_bandwidth_saved,
+                "syncTimestamp": datetime.utcnow().isoformat()
+            }
+            
+        except Exception as e:
+            logger.error(f"Matches sync failed for season {season}: {str(e)}")
+            raise
+    
     async def sync_all_data(self, season: Optional[int] = None) -> Dict[str, Any]:
         """Sync all data with change detection for EPA updates"""
         if season is None:
@@ -580,6 +633,8 @@ async def lambda_handler(event, context):
             result = await sync_service.sync_teams(season)
         elif sync_type == 'events':
             result = await sync_service.sync_events(season)
+        elif sync_type == 'matches':
+            result = await sync_service.sync_matches(season)
         elif sync_type == 'all':
             result = await sync_service.sync_all_data(season)
         else:

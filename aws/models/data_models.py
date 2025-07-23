@@ -14,15 +14,25 @@ class DynamoDBBaseModel(BaseModel):
     
     def _convert_to_dynamodb_types(self, obj: Any) -> Any:
         """Convert Python types to DynamoDB compatible types"""
-        if isinstance(obj, float):
+        if obj is None:
+            return None  # Will be filtered out in to_dynamodb_item
+        elif isinstance(obj, float):
             return Decimal(str(obj))
         elif isinstance(obj, dict):
-            return {k: self._convert_to_dynamodb_types(v) for k, v in obj.items()}
+            # Filter out None values in dictionaries
+            return {k: self._convert_to_dynamodb_types(v) for k, v in obj.items() if v is not None}
         elif isinstance(obj, list):
             return [self._convert_to_dynamodb_types(item) for item in obj]
         elif isinstance(obj, datetime):
             return obj.isoformat()
         return obj
+    
+    def to_dynamodb_item(self) -> Dict[str, Any]:
+        """Convert Pydantic model to DynamoDB item format"""
+        item = self.dict()
+        converted = self._convert_to_dynamodb_types(item)
+        # Filter out None values at the top level
+        return {k: v for k, v in converted.items() if v is not None}
 
 class Team(DynamoDBBaseModel):
     """Team model for FTC_Teams table"""

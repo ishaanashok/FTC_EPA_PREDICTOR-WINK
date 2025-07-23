@@ -188,29 +188,37 @@ class FTCApiService:
         
         raise Exception(f"Failed to make request to {endpoint} after {max_retries} attempts")
     
-    async def get_teams(self, season: int, **params) -> Tuple[Optional[List[Dict]], Dict[str, Any]]:
+    async def get_teams(self, season: int, if_modified_since: Optional[str] = None, **params) -> Tuple[Optional[List[Dict]], Dict[str, Any]]:
         """Get teams for a season with conditional request support"""
         endpoint = f"/{season}/teams"
-        response, metadata = await self.make_conditional_request(endpoint, params)
+        response, metadata = await self.make_conditional_request(
+            endpoint, params, if_modified_since=if_modified_since
+        )
         if response is not None and isinstance(response, dict):
             response = [response]
         return response, metadata
     
-    async def get_events(self, season: int, **params) -> Tuple[Optional[List[Dict]], Dict[str, Any]]:
+    async def get_events(self, season: int, if_modified_since: Optional[str] = None, **params) -> Tuple[Optional[List[Dict]], Dict[str, Any]]:
         """Get events for a season with conditional request support"""
         endpoint = f"/{season}/events"
-        response, metadata = await self.make_conditional_request(endpoint, params)
+        response, metadata = await self.make_conditional_request(
+            endpoint, params, if_modified_since=if_modified_since
+        )
         if response is not None and isinstance(response, dict):
             response = [response]
         return response, metadata
     
     async def get_event_matches(self, season: int, event_code: str, 
-                               tournament_level: str = "qual", **params) -> Tuple[Optional[List[Dict]], Dict[str, Any]]:
+                               tournament_level: str = "qual", 
+                               if_modified_since: Optional[str] = None,
+                               **params) -> Tuple[Optional[List[Dict]], Dict[str, Any]]:
         """Get matches for an event with conditional request support"""
         endpoint = f"/{season}/matches/{event_code}"
         if tournament_level:
             params['tournamentLevel'] = tournament_level
-        response, metadata = await self.make_conditional_request(endpoint, params)
+        response, metadata = await self.make_conditional_request(
+            endpoint, params, if_modified_since=if_modified_since
+        )
         if response is not None and isinstance(response, dict):
             response = [response]
         return response, metadata
