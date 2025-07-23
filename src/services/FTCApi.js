@@ -1,7 +1,7 @@
 import axios from 'axios';
-import config from '../config.js';
+import { config } from '../config.js';
 
-const BASE_URL = config.awsApi.baseUrl;
+const BASE_URL = config.apiBaseUrl;
 
 class FTCApi {
     constructor() {
