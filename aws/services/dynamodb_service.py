@@ -305,12 +305,12 @@ class DynamoDBService:
         return team_epas
     
     async def batch_save_matches(self, matches: List[Dict[str, Any]]) -> bool:
-        """Save multiple matches efficiently"""
+        """Save multiple matches efficiently (expects DynamoDB items)"""
         try:
             with self.matches_table.batch_writer() as batch:
                 for match in matches:
-                    dynamodb_item = self.convert_to_dynamodb_item(match)
-                    batch.put_item(Item=dynamodb_item)
+                    # Assumes match is already a DynamoDB item
+                    batch.put_item(Item=match)
             
             return True
             

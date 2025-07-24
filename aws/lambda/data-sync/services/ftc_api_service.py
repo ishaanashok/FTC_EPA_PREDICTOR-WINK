@@ -221,11 +221,16 @@ class FTCApiService:
             if_modified_since=if_modified_since,
             if_none_match=if_none_match
         )
-        # Ensure response is a list of dicts or None
+        # Handle the response based on the API structure
         if response is None:
             return None, metadata
         elif isinstance(response, dict):
-            return [response], metadata
+            # For events API, extract the 'events' list from the response
+            if 'events' in response:
+                return response['events'], metadata
+            else:
+                # For other APIs that return a single item
+                return [response], metadata
         elif isinstance(response, list):
             return response, metadata
         else:
@@ -248,11 +253,16 @@ class FTCApiService:
             if_modified_since=if_modified_since,
             if_none_match=if_none_match
         )
-        # Ensure response is a list of dicts or None
+        # Handle the response based on the API structure
         if response is None:
             return None, metadata
         elif isinstance(response, dict):
-            return [response], metadata
+            # For matches API, extract the 'matches' list from the response
+            if 'matches' in response:
+                return response['matches'], metadata
+            else:
+                # For other APIs that return a single item
+                return [response], metadata
         elif isinstance(response, list):
             return response, metadata
         else:

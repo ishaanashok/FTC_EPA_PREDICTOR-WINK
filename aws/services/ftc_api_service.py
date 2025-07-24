@@ -353,6 +353,10 @@ class FTCApiService:
                 if page >= response['pageCount']:
                     logger.info(f"[FTC API] Reached last page {page}/{response['pageCount']}")
                     break
+            elif isinstance(response, dict) and 'eventCount' in response:
+                # Events API doesn't use pagination - it returns all events in one response
+                logger.info(f"[FTC API] Events API returned all {response['eventCount']} events in single response")
+                break
             elif len(events_data) == 0:
                 # If no events returned, we've reached the end
                 logger.info(f"[FTC API] No events returned on page {page}, stopping")
@@ -381,9 +385,20 @@ class FTCApiService:
         response, metadata = await self.make_conditional_request(
             endpoint, params, if_modified_since=if_modified_since
         )
-        if response is not None and isinstance(response, dict):
-            response = [response]
-        return response, metadata
+        # Handle the response based on the API structure  
+        if response is None:
+            return None, metadata
+        elif isinstance(response, dict):
+            # For matches API, extract the 'matches' list from the response
+            if 'matches' in response:
+                return response['matches'], metadata
+            else:
+                # For other APIs that return a single item
+                return [response], metadata
+        elif isinstance(response, list):
+            return response, metadata
+        else:
+            return None, metadata
     
     async def get_event_rankings(self, season: int, event_code: str, **params) -> Tuple[Optional[List[Dict]], Dict[str, Any]]:
         """Get rankings for an event with conditional request support"""

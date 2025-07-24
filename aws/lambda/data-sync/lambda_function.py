@@ -508,16 +508,19 @@ class DataSyncService:
             if self.ftc_api is None:
                 raise RuntimeError("FTC API service is not initialized after initialization attempt.")
 
-            # Get active events to sync matches
-            events_data, _ = await self.ftc_api.get_events(season)
-            active_events = events_data if events_data else []
+            # Get active events from DynamoDB instead of making API call
+            logger.info(f"Getting events from DynamoDB for season {season}")
+            events_from_db = await self.db_service.get_events_by_season(season)
+            active_events = events_from_db if events_from_db else []
+            
+            logger.info(f"Found {len(active_events)} events in DynamoDB for season {season}")
             
             matches_results = []
             total_matches_processed = 0
             total_matches_updated = 0
             
             for event_data in active_events:
-                event_code = event_data.get('code')
+                event_code = event_data.get('eventCode') or event_data.get('code')  # Handle both field names
                 if event_code:
                     try:
                         match_result = await self.sync_matches_for_event(event_code, season)
@@ -559,22 +562,19 @@ class DataSyncService:
             teams_result = await self.sync_teams(season)
             events_result = await self.sync_events(season)
             
-            # Ensure FTC API is initialized
-            if self.ftc_api is None:
-                await self.initialize()
-            if self.ftc_api is None:
-                raise RuntimeError("FTC API service is not initialized after initialization attempt.")
-
-            # Get active events to sync matches
-            events_data, _ = await self.ftc_api.get_events(season)
-            active_events = events_data if events_data else []
+            # Get active events from DynamoDB instead of making API call
+            logger.info(f"Getting events from DynamoDB for matches sync")
+            events_from_db = await self.db_service.get_events_by_season(season)
+            active_events = events_from_db if events_from_db else []
+            
+            logger.info(f"Found {len(active_events)} events in DynamoDB for matches sync")
             
             matches_results = []
             total_matches_processed = 0
             total_matches_updated = 0
             
             for event_data in active_events:
-                event_code = event_data.get('code')
+                event_code = event_data.get('eventCode') or event_data.get('code')  # Handle both field names
                 if event_code:
                     try:
                         match_result = await self.sync_matches_for_event(event_code, season)

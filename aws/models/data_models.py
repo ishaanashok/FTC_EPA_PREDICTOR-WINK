@@ -373,7 +373,12 @@ def convert_ftc_api_event(api_event: Dict[str, Any], season: int) -> Event:
 
 def convert_ftc_api_match(api_match: Dict[str, Any], season: int, event_code: str) -> Match:
     """Convert FTC API match response to Match model"""
-    match_id = f"{season}-{event_code}-{api_match.get('matchNumber', 0)}"
+    tournament_level = api_match.get('tournamentLevel', 'UNKNOWN')
+    match_number = api_match.get('matchNumber', 0)
+    series = api_match.get('series', 0)
+    
+    # Create unique match ID including tournament level and series to avoid duplicates
+    match_id = f"{season}-{event_code}-{tournament_level}-{series}-{match_number}"
     
     # Extract teams
     teams = []
@@ -386,8 +391,8 @@ def convert_ftc_api_match(api_match: Dict[str, Any], season: int, event_code: st
             teamNumber=team_data.get('teamNumber', 0),
             station=team_data.get('station', ''),
             dq=team_data.get('dq', False),
-            noShow=team_data.get('noShow', False),
-            surrogate=team_data.get('surrogate', False)
+            noShow=team_data.get('noShow', False),  # Default to False if not provided
+            surrogate=team_data.get('surrogate', False)  # Default to False if not provided
         )
         teams.append(team)
         
