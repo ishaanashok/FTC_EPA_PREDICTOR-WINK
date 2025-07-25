@@ -53,9 +53,12 @@ const EventDetails = () => {
             setTeams(eventData.teams || []);
             setTeamEPAs(eventData.teamEPAs || {});
             
-            const matchesWithPredictions = eventData.matches.map(match => ({
+            const matchesArray = eventData.matches || [];
+            const predictionsArray = eventData.predictions || [];
+            
+            const matchesWithPredictions = matchesArray.map(match => ({
                 ...match,
-                prediction: eventData.predictions.find(p => p.matchNumber === match.matchNumber)?.prediction
+                prediction: predictionsArray.find(p => p.matchNumber === match.matchNumber)?.prediction
             }));
             
             setMatches(matchesWithPredictions);

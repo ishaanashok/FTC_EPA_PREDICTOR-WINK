@@ -37,8 +37,68 @@ function Events() {
       setError(null);
       
       const season = 2024;
-      const response = await ftcApi.getEvents(season);
-      setEvents(response.events || []);
+      
+      // Try the AWS FTC API service first
+      console.log('Trying to fetch events from AWS...');
+      
+      try {
+        const response = await ftcApi.getEvents(season);
+        console.log('FTC API response:', response);
+        console.log('Response type:', typeof response);
+        console.log('Response.events:', response.events);
+        console.log('Response.events type:', typeof response.events);
+        console.log('Response.events length:', response.events?.length);
+        
+        // Extract events from response
+        let events = [];
+        if (response.events && Array.isArray(response.events)) {
+          events = response.events;
+        } else if (Array.isArray(response)) {
+          events = response;
+        } else if (response && typeof response === 'object') {
+          // Try to find events in the response object
+          events = response.events || response.data || [];
+        }
+        
+        console.log('Final events array:', events);
+        console.log('Final events array length:', events.length);
+        
+        setEvents(events);
+        
+        if (events.length === 0) {
+          setError('No events found for season 2024');
+        } else {
+          console.log('Successfully loaded', events.length, 'events');
+        }
+      } catch (ftcError) {
+        console.warn('AWS API failed:', ftcError);
+        
+        // Temporary mock data while AWS infrastructure is being fixed
+        console.log('Using temporary mock data...');
+        const mockEvents = [
+          {
+            code: 'MOCKEV1',
+            name: 'Mock Event 1 - FTC Championship',
+            dateStart: '2024-03-15',
+            venue: 'Mock High School',
+            city: 'Seattle',
+            stateProv: 'WA',
+            country: 'USA'
+          },
+          {
+            code: 'MOCKEV2', 
+            name: 'Mock Event 2 - Regional Qualifier',
+            dateStart: '2024-03-20',
+            venue: 'Another Mock School',
+            city: 'Portland',
+            stateProv: 'OR',
+            country: 'USA'
+          }
+        ];
+        
+        setEvents(mockEvents);
+        setError('Using mock data - AWS API Gateway methods need to be configured');
+      }
     } catch (err) {
       console.error('Error fetching events:', err);
       setError('Failed to fetch events. Please try again later.');

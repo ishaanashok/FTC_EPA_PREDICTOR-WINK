@@ -25,6 +25,45 @@ class MatchesApiService:
         self.environment = environment
         self.db_service = DynamoDBService(environment)
     
+    def transform_match_scores(self, match: Dict[str, Any]) -> Dict[str, Any]:
+        """Transform DynamoDB score structure to expected format"""
+        transformed_match = match.copy()
+        
+        # Extract red score
+        red_score = match.get('redScore', {})
+        if isinstance(red_score, dict) and 'totalPoints' in red_score:
+            transformed_match['scoreRedFinal'] = int(red_score.get('totalPoints', 0))
+        else:
+            transformed_match['scoreRedFinal'] = int(red_score) if red_score else 0
+        
+        # Extract blue score  
+        blue_score = match.get('blueScore', {})
+        if isinstance(blue_score, dict) and 'totalPoints' in blue_score:
+            transformed_match['scoreBlueFinal'] = int(blue_score.get('totalPoints', 0))
+        else:
+            transformed_match['scoreBlueFinal'] = int(blue_score) if blue_score else 0
+        
+        # Add score breakdown if available
+        if isinstance(red_score, dict):
+            transformed_match['redScoreBreakdown'] = {
+                'auto': int(red_score.get('autoPoints', 0)),
+                'teleop': int(red_score.get('teleopPoints', 0)),
+                'endgame': int(red_score.get('endgamePoints', 0)),
+                'penalty': int(red_score.get('penaltyPoints', 0)),
+                'total': int(red_score.get('totalPoints', 0))
+            }
+        
+        if isinstance(blue_score, dict):
+            transformed_match['blueScoreBreakdown'] = {
+                'auto': int(blue_score.get('autoPoints', 0)),
+                'teleop': int(blue_score.get('teleopPoints', 0)),
+                'endgame': int(blue_score.get('endgamePoints', 0)),
+                'penalty': int(blue_score.get('penaltyPoints', 0)),
+                'total': int(blue_score.get('totalPoints', 0))
+            }
+        
+        return transformed_match
+    
     async def get_matches(self, season: int, event_code: Optional[str] = None,
                          team_number: Optional[int] = None, 
                          tournament_level: Optional[str] = None,
@@ -36,10 +75,14 @@ class MatchesApiService:
                 matches = await self.db_service.get_matches_by_event(
                     season, event_code, tournament_level
                 )
+                
+                # Transform score structures
+                transformed_matches = [self.transform_match_scores(match) for match in matches]
+                
                 return {
                     "success": True,
-                    "matches": matches,
-                    "total": len(matches),
+                    "matches": transformed_matches,
+                    "total": len(transformed_matches),
                     "eventCode": event_code,
                     "tournamentLevel": tournament_level
                 }
@@ -52,10 +95,13 @@ class MatchesApiService:
                 if tournament_level:
                     matches = [m for m in matches if m.get('tournamentLevel', '').lower() == tournament_level.lower()]
                 
+                # Transform score structures
+                transformed_matches = [self.transform_match_scores(match) for match in matches]
+                
                 return {
                     "success": True,
-                    "matches": matches,
-                    "total": len(matches),
+                    "matches": transformed_matches,
+                    "total": len(transformed_matches),
                     "teamNumber": team_number,
                     "tournamentLevel": tournament_level
                 }
@@ -90,6 +136,9 @@ class MatchesApiService:
                     "match": None
                 }
             
+            # Transform score structure
+            transformed_match = self.transform_match_scores(match)
+            
             # Get EPA data for teams in this match if available
             team_epas = {}
             all_teams = match.get('allTeams', [])
@@ -99,7 +148,7 @@ class MatchesApiService:
             
             return {
                 "success": True,
-                "match": match,
+                "match": transformed_match,
                 "teamEPAs": team_epas
             }
             
