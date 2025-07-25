@@ -10,8 +10,6 @@ from botocore.exceptions import ClientError
 
 # Local imports
 from services.dynamodb_service import DynamoDBService
-# Note: FTC API service requires additional dependencies not in current layer
-# from services.ftc_api_service import FTCApiService
 
 # Configure logging
 logging.basicConfig(
@@ -26,7 +24,6 @@ class MatchesApiService:
     def __init__(self, environment: str = 'dev'):
         self.environment = environment
         self.db_service = DynamoDBService(environment)
-        # self.ftc_api_service = FTCApiService()  # Disabled due to missing dependencies
     
     def transform_match_scores(self, match: Dict[str, Any]) -> Dict[str, Any]:
         """Transform DynamoDB score structure to expected format"""
@@ -67,30 +64,6 @@ class MatchesApiService:
         
         return transformed_match
     
-    async def enrich_matches_with_teams(self, matches: List[Dict[str, Any]], season: int, event_code: str) -> List[Dict[str, Any]]:
-        """Add empty team structure to matches for frontend compatibility"""
-        try:
-            # For now, just add empty team arrays to prevent frontend errors
-            # TODO: Implement team assignment lookup once FTC API dependencies are resolved
-            enriched_matches = []
-            for match in matches:
-                enriched_match = match.copy()
-                # Add empty team structure for frontend compatibility
-                enriched_match['teams'] = []
-                enriched_match['redTeams'] = []
-                enriched_match['blueTeams'] = []
-                if 'allTeams' not in enriched_match:
-                    enriched_match['allTeams'] = []
-                enriched_matches.append(enriched_match)
-            
-            logger.info(f"Added empty team structure to {len(enriched_matches)} matches")
-            return enriched_matches
-            
-        except Exception as e:
-            logger.error(f"Error adding team structure to matches: {str(e)}")
-            # Return original matches if enrichment fails
-            return matches
-    
     async def get_matches(self, season: int, event_code: Optional[str] = None,
                          team_number: Optional[int] = None, 
                          tournament_level: Optional[str] = None,
@@ -106,13 +79,10 @@ class MatchesApiService:
                 # Transform score structures
                 transformed_matches = [self.transform_match_scores(match) for match in matches]
                 
-                # Enrich with team assignment data
-                enriched_matches = await self.enrich_matches_with_teams(transformed_matches, season, event_code)
-                
                 return {
                     "success": True,
-                    "matches": enriched_matches,
-                    "total": len(enriched_matches),
+                    "matches": transformed_matches,
+                    "total": len(transformed_matches),
                     "eventCode": event_code,
                     "tournamentLevel": tournament_level
                 }

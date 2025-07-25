@@ -96,12 +96,7 @@ class DynamoDBService:
     async def get_teams_by_event(self, season: int, event_code: str) -> List[Dict[str, Any]]:
         """Get teams participating in a specific event"""
         try:
-            # First try to get teams from event's teamNumbers field
-            teams = await self.get_teams_by_event_from_roster(season, event_code)
-            if teams:
-                return teams
-            
-            # Fallback to old method (get from matches)
+            # First get all matches for the event
             matches = await self.get_matches_by_event(season, event_code)
             
             # Extract unique team numbers
@@ -120,40 +115,6 @@ class DynamoDBService:
             
         except Exception as e:
             logger.error(f"Error getting teams for event {event_code}: {str(e)}")
-            return []
-    
-    async def get_teams_by_event_from_roster(self, season: int, event_code: str) -> List[Dict[str, Any]]:
-        """Get teams participating in a specific event from event's team roster"""
-        try:
-            # Get the event to get team numbers
-            event = await self.get_event(event_code, season)
-            
-            if not event or not event.get('teamNumbers'):
-                logger.info(f"No team numbers found in event roster for {event_code} in season {season}")
-                return []
-            
-            # Parse team numbers from comma-separated string
-            team_numbers_str = event.get('teamNumbers', '')
-            if not team_numbers_str:
-                return []
-                
-            team_numbers = [int(num.strip()) for num in team_numbers_str.split(',') if num.strip()]
-            logger.info(f"Found {len(team_numbers)} team numbers in event {event_code} roster")
-            
-            # Get team details
-            teams = []
-            for team_number in team_numbers:
-                team = await self.get_team(team_number, season)
-                if team:
-                    teams.append(team)
-                else:
-                    logger.warning(f"Team {team_number} not found in teams table for season {season}")
-            
-            logger.info(f"Successfully retrieved {len(teams)} team details for event {event_code}")
-            return teams
-            
-        except Exception as e:
-            logger.error(f"Error getting teams from event roster for {event_code}: {str(e)}")
             return []
     
     # Event operations

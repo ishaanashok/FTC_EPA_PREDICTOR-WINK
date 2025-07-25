@@ -89,6 +89,14 @@ class Event(DynamoDBBaseModel):
     matchesLastModified: Optional[str] = Field(None, description="Last-Modified for matches endpoint")
     rankingsLastModified: Optional[str] = Field(None, description="Last-Modified for rankings endpoint")
 
+class MatchTeam(DynamoDBBaseModel):
+    """Individual team data within a match"""
+    teamNumber: int = Field(..., description="Team number")
+    station: str = Field(..., description="Station (Red1, Red2, Blue1, Blue2)")
+    dq: bool = Field(False, description="Disqualified")
+    noShow: bool = Field(False, description="No show")
+    surrogate: bool = Field(False, description="Surrogate")
+
 class MatchScore(DynamoDBBaseModel):
     """Match score breakdown"""
     alliance: str = Field(..., description="Alliance color (Red/Blue)")
@@ -115,9 +123,17 @@ class Match(DynamoDBBaseModel):
     actualStartTime: Optional[str] = Field(None, description="Actual start time")
     postResultTime: Optional[str] = Field(None, description="Result post time")
     
-    # Scores only - no team information
+    # Teams
+    teams: List[MatchTeam] = Field(default_factory=list, description="Teams in match")
+    
+    # Scores
     redScore: Optional[MatchScore] = Field(None, description="Red alliance score")
     blueScore: Optional[MatchScore] = Field(None, description="Blue alliance score")
+    
+    # Quick access fields for queries
+    redTeams: List[int] = Field(default_factory=list, description="Red team numbers")
+    blueTeams: List[int] = Field(default_factory=list, description="Blue team numbers")
+    allTeams: List[int] = Field(default_factory=list, description="All team numbers")
     
     lastUpdated: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     
@@ -357,7 +373,7 @@ def convert_ftc_api_event(api_event: Dict[str, Any], season: int) -> Event:
     )
 
 def convert_ftc_api_match(api_match: Dict[str, Any], season: int, event_code: str) -> Match:
-    """Convert FTC API match response to Match model - scores only, no team data"""
+    """Convert FTC API match response to Match model"""
     tournament_level = api_match.get('tournamentLevel', 'UNKNOWN')
     match_number = api_match.get('matchNumber', 0)
     series = api_match.get('series', 0)
@@ -365,7 +381,31 @@ def convert_ftc_api_match(api_match: Dict[str, Any], season: int, event_code: st
     # Create unique match ID including tournament level and series to avoid duplicates
     match_id = f"{season}-{event_code}-{tournament_level}-{series}-{match_number}"
     
-    # Extract scores only
+    # Extract teams
+    teams = []
+    red_teams = []
+    blue_teams = []
+    all_teams = []
+    
+    for team_data in api_match.get('teams', []):
+        team = MatchTeam(
+            teamNumber=team_data.get('teamNumber', 0),
+            station=team_data.get('station', ''),
+            dq=team_data.get('dq', False),
+            noShow=team_data.get('noShow', False),  # Default to False if not provided
+            surrogate=team_data.get('surrogate', False)  # Default to False if not provided
+        )
+        teams.append(team)
+        
+        team_number = team_data.get('teamNumber', 0)
+        all_teams.append(team_number)
+        
+        if 'Red' in team_data.get('station', ''):
+            red_teams.append(team_number)
+        elif 'Blue' in team_data.get('station', ''):
+            blue_teams.append(team_number)
+    
+    # Extract scores
     red_score = None
     blue_score = None
     
@@ -403,8 +443,12 @@ def convert_ftc_api_match(api_match: Dict[str, Any], season: int, event_code: st
         startTime=api_match.get('startTime'),
         actualStartTime=api_match.get('actualStartTime'),
         postResultTime=api_match.get('postResultTime'),
+        teams=teams,
         redScore=red_score,
         blueScore=blue_score,
+        redTeams=red_teams,
+        blueTeams=blue_teams,
+        allTeams=all_teams,
         lastModified=None,
         etag=None,
         apiLastModified=None,

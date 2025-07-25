@@ -229,16 +229,20 @@ const EventDetails = () => {
                     <TableRow key={match.matchNumber}>
                       <TableCell>{match.description || `Match ${match.matchNumber}`}</TableCell>
                       <TableCell>
-                        {match.teams
-                          .filter(team => team.station.includes('Red'))
-                          .map(team => team.teamNumber)
-                          .join(', ')}
+                        {match.teams && match.teams.length > 0 
+                          ? match.teams
+                              .filter(team => team.station && team.station.includes('Red'))
+                              .map(team => team.teamNumber)
+                              .join(', ')
+                          : 'N/A'}
                       </TableCell>
                       <TableCell>
-                        {match.teams
-                          .filter(team => team.station.includes('Blue'))
-                          .map(team => team.teamNumber)
-                          .join(', ')}
+                        {match.teams && match.teams.length > 0 
+                          ? match.teams
+                              .filter(team => team.station && team.station.includes('Blue'))
+                              .map(team => team.teamNumber)
+                              .join(', ')
+                          : 'N/A'}
                       </TableCell>
                       <TableCell sx={predictedWinnerBg ? { backgroundColor: predictedWinnerBg } : {}}>
                         {prediction.predicted_winner || 'N/A'}
