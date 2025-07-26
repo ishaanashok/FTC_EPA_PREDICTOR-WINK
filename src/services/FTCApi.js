@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { config } from '../config.js';
+import { fetchAuthSession } from 'aws-amplify/auth';
 
 const BASE_URL = config.apiBaseUrl;
 
@@ -12,6 +13,33 @@ class FTCApi {
                 'Accept': 'application/json'
             }
         });
+    }
+
+    // Helper method to get authentication headers
+    async getAuthHeaders() {
+        try {
+            const session = await fetchAuthSession();
+            const idToken = session.tokens?.idToken?.toString();
+            
+            if (idToken) {
+                return {
+                    'Authorization': `Bearer ${idToken}`,
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                };
+            }
+            
+            return {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            };
+        } catch (error) {
+            console.warn('Failed to get auth session:', error);
+            return {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            };
+        }
     }
 
     // Helper method for making requests
@@ -404,11 +432,17 @@ class FTCApi {
         try {
             console.log('Adding matches to database via AWS Lambda:', { matches, season, eventCode });
             
-            // Use the AWS API Gateway endpoint for admin functions
+            // Get authentication headers with JWT token
+            const headers = await this.getAuthHeaders();
+            console.log('Using auth headers for admin request');
+            
+            // Use the AWS API Gateway endpoint for admin functions with auth headers
             const response = await this.axiosInstance.post('/admin/matches', {
                 matches,
                 season,
                 eventCode
+            }, {
+                headers
             });
             
             return response.data;
@@ -422,6 +456,84 @@ class FTCApi {
                 throw new Error('Admin API endpoint not found. The Lambda function may not be deployed yet.');
             } else {
                 throw new Error(error.response?.data?.message || error.message || 'Failed to add matches');
+            }
+        }
+    }
+
+    // Admin method to delete a match
+    async deleteMatch(matchId, season, eventCode) {
+        try {
+            const headers = await this.getAuthHeaders();
+            
+            const response = await this.axiosInstance.delete(`/admin/matches/${matchId}`, {
+                headers,
+                data: {
+                    season,
+                    eventCode
+                }
+            });
+            
+            return response.data;
+        } catch (error) {
+            console.error('Error deleting match via AWS Lambda:', error);
+            
+            // Provide more specific error information
+            if (error.response?.status === 403) {
+                throw new Error('Admin authorization required. Please ensure you are logged in as an administrator.');
+            } else if (error.response?.status === 404) {
+                throw new Error('Match not found or admin API endpoint not available.');
+            } else {
+                throw new Error(error.response?.data?.message || error.message || 'Failed to delete match');
+            }
+        }
+    }
+
+    // Admin method to get existing matches for an event
+    async getEventMatches(season, eventCode) {
+        try {
+            const headers = await this.getAuthHeaders();
+            
+            const response = await this.axiosInstance.get(`/admin/matches/${season}/${eventCode}`, {
+                headers
+            });
+            
+            return response.data;
+        } catch (error) {
+            console.error('Error fetching event matches:', error);
+            
+            if (error.response?.status === 403) {
+                throw new Error('Admin authorization required. Please ensure you are logged in as an administrator.');
+            } else if (error.response?.status === 404) {
+                throw new Error('No matches found for this event or admin API endpoint not available.');
+            } else {
+                throw new Error(error.response?.data?.message || error.message || 'Failed to fetch event matches');
+            }
+        }
+    }
+
+    // Admin method to update an existing match
+    async updateMatch(matchId, matchData, season, eventCode) {
+        try {
+            const headers = await this.getAuthHeaders();
+            
+            const response = await this.axiosInstance.put(`/admin/matches/${matchId}`, {
+                match: matchData,
+                season,
+                eventCode
+            }, {
+                headers
+            });
+            
+            return response.data;
+        } catch (error) {
+            console.error('Error updating match:', error);
+            
+            if (error.response?.status === 403) {
+                throw new Error('Admin authorization required. Please ensure you are logged in as an administrator.');
+            } else if (error.response?.status === 404) {
+                throw new Error('Match not found or admin API endpoint not available.');
+            } else {
+                throw new Error(error.response?.data?.message || error.message || 'Failed to update match');
             }
         }
     }

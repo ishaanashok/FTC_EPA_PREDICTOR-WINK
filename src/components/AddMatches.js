@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Box,
   Paper,
@@ -9,7 +9,8 @@ import {
   Alert,
   CircularProgress,
   IconButton,
-  Divider
+  Divider,
+  Tooltip
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -23,9 +24,72 @@ const AddMatches = ({ season, eventCode, teams, onMatchesAdded }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
+  const [loadingMatches, setLoadingMatches] = useState(false);
   const ftcApi = new FTCApi();
-  const [matches, setMatches] = useState(() => {
-    // Initialize with 5 empty rows
+  const [matches, setMatches] = useState([]);
+
+  // Load existing matches when component mounts or season/eventCode changes
+  useEffect(() => {
+    if (season && eventCode) {
+      loadExistingMatches();
+    }
+  }, [season, eventCode]);
+
+  const loadExistingMatches = async () => {
+    try {
+      setLoadingMatches(true);
+      setError(null);
+      
+      const result = await ftcApi.getEventMatches(season, eventCode);
+      
+      if (result.success && result.matches) {
+        // Convert DynamoDB matches to form format
+        const formMatches = result.matches.map((match, index) => ({
+          id: index,
+          matchNumber: match.matchNumber || '',
+          red1: match.redTeams?.[0] || '',
+          red2: match.redTeams?.[1] || '',
+          blue1: match.blueTeams?.[0] || '',
+          blue2: match.blueTeams?.[1] || '',
+          redScore: match.redScore || '',
+          blueScore: match.blueScore || '',
+          savedToDynamoDB: true,
+          matchId: match.matchId
+        }));
+        
+        // Add a few empty rows for new matches
+        const emptyRows = [];
+        for (let i = 0; i < 3; i++) {
+          emptyRows.push({
+            id: formMatches.length + i,
+            matchNumber: '',
+            red1: '',
+            red2: '',
+            blue1: '',
+            blue2: '',
+            redScore: '',
+            blueScore: '',
+            savedToDynamoDB: false,
+            matchId: null
+          });
+        }
+        
+        setMatches([...formMatches, ...emptyRows]);
+        console.log(`Loaded ${formMatches.length} existing matches for ${eventCode}`);
+      } else {
+        // No existing matches, start with empty rows
+        initializeEmptyMatches();
+      }
+    } catch (error) {
+      console.warn('Failed to load existing matches:', error);
+      // Initialize with empty matches if loading fails
+      initializeEmptyMatches();
+    } finally {
+      setLoadingMatches(false);
+    }
+  };
+
+  const initializeEmptyMatches = () => {
     const initialMatches = [];
     for (let i = 0; i < 5; i++) {
       initialMatches.push({
@@ -36,11 +100,13 @@ const AddMatches = ({ season, eventCode, teams, onMatchesAdded }) => {
         blue1: '',
         blue2: '',
         redScore: '',
-        blueScore: ''
+        blueScore: '',
+        savedToDynamoDB: false,
+        matchId: null
       });
     }
-    return initialMatches;
-  });
+    setMatches(initialMatches);
+  };
 
   const addRow = () => {
     const newMatch = {
@@ -51,21 +117,77 @@ const AddMatches = ({ season, eventCode, teams, onMatchesAdded }) => {
       blue1: '',
       blue2: '',
       redScore: '',
-      blueScore: ''
+      blueScore: '',
+      savedToDynamoDB: false,
+      matchId: null
     };
     setMatches([...matches, newMatch]);
   };
 
-  const removeRow = (id) => {
+  const removeRow = async (id) => {
     if (matches.length > 1) {
+      const matchToRemove = matches.find(match => match.id === id);
+      
+      // If the match was saved to DynamoDB, delete it from there too
+      if (matchToRemove && matchToRemove.savedToDynamoDB && matchToRemove.matchId) {
+        try {
+          setLoading(true);
+          await ftcApi.deleteMatch(matchToRemove.matchId, season, eventCode);
+          console.log(`Deleted match ${matchToRemove.matchId} from DynamoDB`);
+        } catch (error) {
+          console.error('Error deleting match from DynamoDB:', error);
+          setError(`Failed to delete match from database: ${error.message}`);
+          setLoading(false);
+          return; // Don't remove from UI if DynamoDB delete failed
+        } finally {
+          setLoading(false);
+        }
+      }
+      
+      // Remove from local state
       setMatches(matches.filter(match => match.id !== id));
     }
   };
 
-  const updateMatch = (id, field, value) => {
-    setMatches(matches.map(match => 
+  const updateMatch = async (id, field, value) => {
+    const updatedMatches = matches.map(match => 
       match.id === id ? { ...match, [field]: value } : match
-    ));
+    );
+    setMatches(updatedMatches);
+
+    // If this is a saved match, update it in DynamoDB
+    const match = matches.find(m => m.id === id);
+    if (match && match.savedToDynamoDB && match.matchId) {
+      try {
+        // Debounce the update to avoid too many API calls
+        clearTimeout(window.updateTimeout);
+        window.updateTimeout = setTimeout(async () => {
+          const updatedMatch = updatedMatches.find(m => m.id === id);
+          await updateMatchInDynamoDB(updatedMatch);
+        }, 1000); // Wait 1 second after user stops typing
+      } catch (error) {
+        console.error('Error updating match in DynamoDB:', error);
+        setError(`Failed to update match: ${error.message}`);
+      }
+    }
+  };
+
+  const updateMatchInDynamoDB = async (match) => {
+    try {
+      const matchData = {
+        matchNumber: parseInt(match.matchNumber) || 0,
+        redTeams: [parseInt(match.red1) || 0, parseInt(match.red2) || 0].filter(t => t > 0),
+        blueTeams: [parseInt(match.blue1) || 0, parseInt(match.blue2) || 0].filter(t => t > 0),
+        redScore: match.redScore ? parseInt(match.redScore) : null,
+        blueScore: match.blueScore ? parseInt(match.blueScore) : null
+      };
+
+      const result = await ftcApi.updateMatch(match.matchId, matchData, season, eventCode);
+      console.log('Match updated in DynamoDB:', result);
+    } catch (error) {
+      console.error('Error updating match in DynamoDB:', error);
+      throw error;
+    }
   };
 
   const validateMatch = (match) => {
@@ -205,17 +327,29 @@ const AddMatches = ({ season, eventCode, teams, onMatchesAdded }) => {
         
         setSuccess(`Successfully saved ${filledMatches.length} matches to the database`);
         
-        // Clear the form
-        setMatches(matches.map(match => ({
-          ...match,
-          matchNumber: '',
-          red1: '',
-          red2: '',
-          blue1: '',
-          blue2: '',
-          redScore: '',
-          blueScore: ''
-        })));
+        // Mark saved matches as saved in DynamoDB and store their match IDs
+        const matchIds = result.matchIds || [];
+        setMatches(matches.map((match, index) => {
+          // Find if this match was in the filled matches array
+          const filledIndex = filledMatches.findIndex(fm => 
+            fm.matchNumber === match.matchNumber && 
+            fm.red1 === match.red1 && 
+            fm.red2 === match.red2 &&
+            fm.blue1 === match.blue1 && 
+            fm.blue2 === match.blue2
+          );
+          
+          if (filledIndex >= 0 && matchIds[filledIndex]) {
+            // This match was saved to DynamoDB
+            return {
+              ...match,
+              savedToDynamoDB: true,
+              matchId: matchIds[filledIndex]
+            };
+          }
+          
+          return match;
+        }));
 
         // Notify parent component if callback provided
         if (onMatchesAdded) {
@@ -254,6 +388,15 @@ const AddMatches = ({ season, eventCode, teams, onMatchesAdded }) => {
         Fill in the match details below. Match numbers should be unique within the tournament level.
         Scores are optional - leave blank for unplayed matches.
       </Typography>
+
+      {loadingMatches && (
+        <Alert severity="info" sx={{ mb: 3 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+            <CircularProgress size={20} />
+            Loading existing matches...
+          </Box>
+        </Alert>
+      )}
 
       {error && (
         <Alert severity="error" sx={{ mb: 3 }}>
@@ -302,7 +445,18 @@ const AddMatches = ({ season, eventCode, teams, onMatchesAdded }) => {
 
         {/* Data Rows */}
         {matches.map((match, index) => (
-          <Grid container spacing={2} key={match.id} sx={{ mb: 1 }}>
+          <Grid 
+            container 
+            spacing={2} 
+            key={match.id} 
+            sx={{ 
+              mb: 1,
+              p: 1,
+              backgroundColor: match.savedToDynamoDB ? '#e8f5e8' : 'transparent',
+              borderRadius: 1,
+              border: match.savedToDynamoDB ? '1px solid #4caf50' : 'none'
+            }}
+          >
             <Grid item xs={1}>
               <TextField
                 size="small"
@@ -381,14 +535,21 @@ const AddMatches = ({ season, eventCode, teams, onMatchesAdded }) => {
               />
             </Grid>
             <Grid item xs={1}>
-              <IconButton
-                size="small"
-                onClick={() => removeRow(match.id)}
-                disabled={matches.length <= 1}
-                color="error"
+              <Tooltip 
+                title={match.savedToDynamoDB 
+                  ? `Saved to database. Click to delete from DynamoDB (ID: ${match.matchId})` 
+                  : "Remove row from form"
+                }
               >
-                <DeleteIcon />
-              </IconButton>
+                <IconButton
+                  size="small"
+                  onClick={() => removeRow(match.id)}
+                  disabled={matches.length <= 1}
+                  color={match.savedToDynamoDB ? "warning" : "error"}
+                >
+                  <DeleteIcon />
+                </IconButton>
+              </Tooltip>
             </Grid>
           </Grid>
         ))}
