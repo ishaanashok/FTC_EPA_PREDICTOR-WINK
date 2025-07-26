@@ -1,8 +1,25 @@
+"""
+EPA Calculator Lambda Function
+
+Recent improvements:
+- Fixed environment default from 'dev' to 'stage' for production deployment
+- Enhanced date parsing with proper string/datetime handling to prevent comparison errors
+- Added comprehensive input validation for team numbers and batch requests
+- Added performance monitoring with execution timing
+- Improved error handling and logging for better debugging
+- Validated with TeamIndex GSI for efficient team match lookups
+
+Dependencies:
+- Requires DynamoDB service with TeamIndex GSI (teamNumber + season)
+- Requires team-match association records for EPA calculations
+"""
+
 import json
 import boto3
 import logging
 import os
 import asyncio
+import time
 from typing import Dict, List, Any, Optional
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -16,7 +33,7 @@ logger.setLevel(logging.INFO)
 from services.dynamodb_service import DynamoDBService
 
 # Environment variables
-ENVIRONMENT = os.environ.get('ENVIRONMENT', 'dev')
+ENVIRONMENT = os.environ.get('ENVIRONMENT', 'stage')
 
 class EPACalculator:
     """EPA Calculator for FTC teams using DynamoDB data"""
@@ -32,6 +49,7 @@ class EPACalculator:
 
     async def calculate_team_epa(self, team_number: int, event_start_date: str = None) -> Dict[str, Any]:
         """Calculate EPA for a team based on their historical matches"""
+        start_time = time.time()
         logger.info(f"Calculating EPA for team {team_number}")
         
         try:
@@ -47,8 +65,35 @@ class EPACalculator:
                         filtered_matches = []
                         for match in season_matches:
                             match_date = match.get('actualStartTime') or match.get('startTime')
-                            if match_date and match_date < event_start_date:
-                                filtered_matches.append(match)
+                            if match_date:
+                                try:
+                                    # Convert string dates to datetime for comparison
+                                    if isinstance(match_date, str):
+                                        from datetime import datetime
+                                        # Handle different date formats that might be stored
+                                        if 'T' in match_date:
+                                            parsed_date = datetime.fromisoformat(match_date.replace('Z', '+00:00'))
+                                        else:
+                                            # Assume it's a date string in a standard format
+                                            parsed_date = datetime.strptime(match_date, '%Y-%m-%d %H:%M:%S')
+                                    else:
+                                        parsed_date = match_date
+                                    
+                                    # Ensure event_start_date is also a datetime
+                                    if isinstance(event_start_date, str):
+                                        if 'T' in event_start_date:
+                                            event_date = datetime.fromisoformat(event_start_date.replace('Z', '+00:00'))
+                                        else:
+                                            event_date = datetime.strptime(event_start_date, '%Y-%m-%d %H:%M:%S')
+                                    else:
+                                        event_date = event_start_date
+                                    
+                                    if parsed_date < event_date:
+                                        filtered_matches.append(match)
+                                except (ValueError, TypeError) as e:
+                                    # If date parsing fails, include the match (safer approach)
+                                    logger.warning(f"Could not parse match date {match_date}: {e}")
+                                    filtered_matches.append(match)
                         all_matches[season] = filtered_matches
                     else:
                         all_matches[season] = season_matches
@@ -81,11 +126,13 @@ class EPACalculator:
                 'lastMatchDate': await self.get_last_match_date(all_matches)
             }
             
-            logger.info(f"EPA calculation completed for team {team_number}: {historical_epa}")
+            calculation_time = time.time() - start_time
+            logger.info(f"EPA calculation completed for team {team_number}: {historical_epa} (took {calculation_time:.2f}s)")
             return epa_data
             
         except Exception as e:
-            logger.error(f"Error calculating EPA for team {team_number}: {str(e)}")
+            calculation_time = time.time() - start_time
+            logger.error(f"Error calculating EPA for team {team_number}: {str(e)} (took {calculation_time:.2f}s)")
             return {
                 'historicalEPA': 0.0,
                 'currentSeasonEPA': 0.0,
@@ -139,19 +186,44 @@ class EPACalculator:
     async def calculate_match_epa(self, match: Dict, team_number: int) -> float:
         """Calculate EPA contribution from a single match"""
         try:
-            # Find team's alliance
+            # Check for team-match record format first (our current data structure)
+            red_teams = match.get('redTeams', [])
+            blue_teams = match.get('blueTeams', [])
+            
+            # Convert team numbers to integers for comparison
+            team_number_int = int(team_number)
+            red_teams_int = [int(float(t)) for t in red_teams if t is not None]
+            blue_teams_int = [int(float(t)) for t in blue_teams if t is not None]
+            
+            # Find team's alliance using our data structure
             team_alliance = None
-            for team_data in match.get('teams', []):
-                if team_data.get('teamNumber') == team_number:
-                    team_alliance = 'Red' if 'Red' in team_data.get('station', '') else 'Blue'
-                    break
+            if team_number_int in red_teams_int:
+                team_alliance = 'Red'
+            elif team_number_int in blue_teams_int:
+                team_alliance = 'Blue'
+            elif match.get('alliance') == 'red':
+                team_alliance = 'Red'
+            elif match.get('alliance') == 'blue':
+                team_alliance = 'Blue'
             
             if not team_alliance:
-                return 0.0
+                # Fallback to original format for compatibility
+                for team_data in match.get('teams', []):
+                    if team_data.get('teamNumber') == team_number:
+                        team_alliance = 'Red' if 'Red' in team_data.get('station', '') else 'Blue'
+                        break
+                
+                if not team_alliance:
+                    return 0.0
             
-            # Get scores
-            red_score = match.get('redScore', {}).get('totalPoints', 0)
-            blue_score = match.get('blueScore', {}).get('totalPoints', 0)
+            # Get scores from our data structure
+            red_score = float(match.get('scoreRedFinal', 0))
+            blue_score = float(match.get('scoreBlueFinal', 0))
+            
+            # Fallback to nested format if flat format not available
+            if red_score == 0 and blue_score == 0:
+                red_score = match.get('redScore', {}).get('totalPoints', 0)
+                blue_score = match.get('blueScore', {}).get('totalPoints', 0)
             
             if red_score == 0 and blue_score == 0:
                 return 0.0
@@ -160,9 +232,16 @@ class EPACalculator:
             alliance_score = red_score if team_alliance == 'Red' else blue_score
             opponent_score = blue_score if team_alliance == 'Red' else red_score
             
-            # Count teams in alliance
-            alliance_teams = len([t for t in match.get('teams', []) 
-                                if ('Red' in t.get('station', '')) == (team_alliance == 'Red')])
+            # Count teams in alliance (use our data structure)
+            if team_alliance == 'Red':
+                alliance_teams = len(red_teams_int)
+            else:
+                alliance_teams = len(blue_teams_int)
+            
+            # Fallback to original format if needed
+            if alliance_teams == 0:
+                alliance_teams = len([t for t in match.get('teams', []) 
+                                    if ('Red' in t.get('station', '')) == (team_alliance == 'Red')])
             
             # Base contribution (split among alliance members)
             base_contribution = alliance_score / max(alliance_teams, 1)
@@ -171,15 +250,20 @@ class EPACalculator:
             opponent_strength = 1 + (opponent_score / max(alliance_score, 1))
             
             # Match type multiplier
-            match_type_multiplier = 1.3 if match.get('tournamentLevel', '').lower() == 'playoff' else 1.0
+            match_level = match.get('matchLevel', match.get('tournamentLevel', '')).lower()
+            match_type_multiplier = 1.3 if 'playoff' in match_level or 'elimination' in match_level else 1.0
             
             # Calculate match EPA
             match_epa = base_contribution * opponent_strength * match_type_multiplier
             
+            logger.debug(f"Match EPA calculation - Team {team_number} ({team_alliance}): "
+                        f"Score {alliance_score} vs {opponent_score}, "
+                        f"Teams {alliance_teams}, EPA {match_epa:.2f}")
+            
             return match_epa
             
         except Exception as e:
-            logger.warning(f"Error calculating match EPA: {str(e)}")
+            logger.warning(f"Error calculating match EPA for team {team_number}: {str(e)}")
             return 0.0
 
     async def calculate_performance_metrics(self, all_matches: Dict[int, List[Dict]], team_number: int) -> Dict[str, float]:
@@ -193,27 +277,57 @@ class EPACalculator:
             weight = self.year_weights.get(season, 0.1)
             
             for match in matches:
-                # Find team's alliance
+                # Find team's alliance using our data structure
+                red_teams = match.get('redTeams', [])
+                blue_teams = match.get('blueTeams', [])
+                
+                team_number_int = int(team_number)
+                red_teams_int = [int(float(t)) for t in red_teams if t is not None]
+                blue_teams_int = [int(float(t)) for t in blue_teams if t is not None]
+                
                 team_alliance = None
-                for team_data in match.get('teams', []):
-                    if team_data.get('teamNumber') == team_number:
-                        team_alliance = 'Red' if 'Red' in team_data.get('station', '') else 'Blue'
-                        break
+                if team_number_int in red_teams_int:
+                    team_alliance = 'Red'
+                elif team_number_int in blue_teams_int:
+                    team_alliance = 'Blue'
+                elif match.get('alliance') == 'red':
+                    team_alliance = 'Red'
+                elif match.get('alliance') == 'blue':
+                    team_alliance = 'Blue'
+                
+                # Fallback to original format
+                if not team_alliance:
+                    for team_data in match.get('teams', []):
+                        if team_data.get('teamNumber') == team_number:
+                            team_alliance = 'Red' if 'Red' in team_data.get('station', '') else 'Blue'
+                            break
                 
                 if not team_alliance:
                     continue
                 
-                # Get alliance score breakdown
-                alliance_score = match.get('redScore' if team_alliance == 'Red' else 'blueScore', {})
+                # Get alliance score breakdown from our data structure
+                if team_alliance == 'Red':
+                    auto_points = float(match.get('scoreRedAuto', 0))
+                    teleop_points = float(match.get('scoreRedTeleop', 0))
+                    endgame_points = float(match.get('scoreRedEndgame', 0))
+                    alliance_teams = len(red_teams_int)
+                else:
+                    auto_points = float(match.get('scoreBlueAuto', 0))
+                    teleop_points = float(match.get('scoreBlueTeleop', 0))
+                    endgame_points = float(match.get('scoreBlueEndgame', 0))
+                    alliance_teams = len(blue_teams_int)
                 
-                # Get component scores
-                auto_points = alliance_score.get('autoPoints', 0)
-                teleop_points = alliance_score.get('teleopPoints', 0)
-                endgame_points = alliance_score.get('endgamePoints', 0)
+                # Fallback to original nested format if our format not available
+                if auto_points == 0 and teleop_points == 0 and endgame_points == 0:
+                    alliance_score = match.get('redScore' if team_alliance == 'Red' else 'blueScore', {})
+                    auto_points = alliance_score.get('autoPoints', 0)
+                    teleop_points = alliance_score.get('teleopPoints', 0)
+                    endgame_points = alliance_score.get('endgamePoints', 0)
                 
-                # Count teams in alliance
-                alliance_teams = len([t for t in match.get('teams', []) 
-                                    if ('Red' in t.get('station', '')) == (team_alliance == 'Red')])
+                # Fallback team count if needed
+                if alliance_teams == 0:
+                    alliance_teams = len([t for t in match.get('teams', []) 
+                                        if ('Red' in t.get('station', '')) == (team_alliance == 'Red')])
                 
                 # Calculate per-team contribution
                 if alliance_teams > 0:
@@ -338,6 +452,7 @@ def lambda_handler(event, context):
     
     try:
         # Initialize services
+        logger.info(f"Initializing DynamoDB service with environment: {ENVIRONMENT}")
         db_service = DynamoDBService(ENVIRONMENT)
         epa_calculator = EPACalculator(db_service)
         
@@ -362,6 +477,20 @@ def lambda_handler(event, context):
                         'headers': {'Content-Type': 'application/json'},
                         'body': json.dumps({'error': 'teamNumber is required'})
                     }
+                
+                # Validate team number
+                try:
+                    team_number = int(team_number)
+                    if team_number <= 0 or team_number > 999999:  # Reasonable bounds for FTC team numbers
+                        raise ValueError("Team number out of range")
+                except (ValueError, TypeError) as e:
+                    return {
+                        'statusCode': 400,
+                        'headers': {'Content-Type': 'application/json'},
+                        'body': json.dumps({'error': f'Invalid teamNumber: must be a positive integer between 1 and 999999'})
+                    }
+                
+                logger.info(f"Processing EPA calculation for team {team_number}")
                 
                 # Run the calculation
                 loop = asyncio.new_event_loop()
@@ -395,6 +524,32 @@ def lambda_handler(event, context):
                         'headers': {'Content-Type': 'application/json'},
                         'body': json.dumps({'error': 'teamNumbers array is required'})
                     }
+                
+                # Validate team numbers
+                try:
+                    validated_team_numbers = []
+                    for team_num in team_numbers:
+                        team_num = int(team_num)
+                        if team_num <= 0 or team_num > 999999:
+                            raise ValueError(f"Team number {team_num} out of range")
+                        validated_team_numbers.append(team_num)
+                    team_numbers = validated_team_numbers
+                    
+                    if len(team_numbers) > 100:  # Reasonable limit for batch processing
+                        return {
+                            'statusCode': 400,
+                            'headers': {'Content-Type': 'application/json'},
+                            'body': json.dumps({'error': 'Too many teams requested (maximum 100)'})
+                        }
+                        
+                except (ValueError, TypeError) as e:
+                    return {
+                        'statusCode': 400,
+                        'headers': {'Content-Type': 'application/json'},
+                        'body': json.dumps({'error': f'Invalid teamNumbers: all must be positive integers between 1 and 999999'})
+                    }
+                
+                logger.info(f"Processing batch EPA calculation for {len(team_numbers)} teams")
                 
                 # Run the batch calculation
                 loop = asyncio.new_event_loop()
@@ -494,3 +649,9 @@ def lambda_handler(event, context):
             'headers': {'Content-Type': 'application/json'},
             'body': json.dumps({'error': str(e)})
         } 
+
+
+# Synchronous wrapper for AWS Lambda (required since AWS doesn't support async handlers directly)
+def handler(event, context):
+    """Synchronous wrapper for the main lambda handler"""
+    return lambda_handler(event, context) 

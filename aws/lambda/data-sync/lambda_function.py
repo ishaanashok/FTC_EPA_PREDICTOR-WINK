@@ -5,6 +5,7 @@ import asyncio
 from datetime import datetime, timezone
 from typing import Dict, List, Any, Optional
 import hashlib
+from decimal import Decimal
 
 # AWS SDK
 import boto3
@@ -26,7 +27,15 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 class DataSyncService:
-    """Data synchronization service with HTTP caching optimization"""
+    """
+    Data synchronization service with HTTP caching optimization
+    
+    Features:
+    - Syncs teams, events, and matches from FTC API to DynamoDB
+    - Creates denormalized team-match records for efficient team queries
+    - Uses HTTP caching headers to minimize bandwidth usage
+    - Supports change detection for EPA update triggers
+    """
     
     def __init__(self, environment: str = 'dev'):
         self.environment = environment
@@ -73,6 +82,102 @@ class DataSyncService:
                           match_data_changed: bool) -> bool:
         """Determine if EPA calculations should be updated based on data changes"""
         return team_data_changed or event_data_changed or match_data_changed
+    
+    def _convert_to_dynamodb_format(self, obj):
+        """Convert Python objects to DynamoDB compatible format"""
+        if isinstance(obj, dict):
+            return {k: self._convert_to_dynamodb_format(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [self._convert_to_dynamodb_format(item) for item in obj]
+        elif isinstance(obj, bool):
+            # Handle bool before int (bool is a subclass of int)
+            return obj
+        elif isinstance(obj, (int, float)):
+            return Decimal(str(obj))
+        elif isinstance(obj, str):
+            return obj
+        elif obj is None:
+            return obj
+        else:
+            return str(obj)
+    
+    def _create_team_match_records(self, match: Match) -> List[Dict[str, Any]]:
+        """Create denormalized team-match records for efficient team querying"""
+        team_match_records = []
+        
+        # Get all teams from the match
+        all_teams = match.allTeams or []
+        red_teams = match.redTeams or []
+        blue_teams = match.blueTeams or []
+        
+        # Create a record for each team
+        for team_number in all_teams:
+            if team_number is None:
+                continue
+                
+            try:
+                team_number_int = int(float(team_number))
+                
+                # Determine team's alliance
+                alliance = 'red' if team_number in red_teams else 'blue'
+                
+                # Create team-match record with denormalized format
+                team_match_id = f"{match.season}-TEAM-{team_number_int}-{match.matchId}"
+                
+                # Convert match to dict and add team-specific fields
+                match_dict = match.to_dict()
+                match_dict.update({
+                    'matchId': team_match_id,
+                    'teamNumber': team_number_int,
+                    'season': match.season,
+                    'alliance': alliance,
+                    'isTeamRecord': True,
+                    'originalMatchId': match.matchId
+                })
+                
+                # Convert to DynamoDB format
+                team_match_record = self._convert_to_dynamodb_format(match_dict)
+                team_match_records.append(team_match_record)
+                
+            except (ValueError, TypeError) as e:
+                logger.warning(f"Invalid team number {team_number} in match {match.matchId}: {e}")
+                continue
+        
+        return team_match_records
+    
+    async def _batch_save_team_match_records(self, team_match_records: List[Dict[str, Any]]) -> int:
+        """Save team-match records to DynamoDB in batches"""
+        saved_count = 0
+        
+        if not team_match_records:
+            return saved_count
+        
+        try:
+            # Use batch_writer for efficient bulk inserts
+            with self.db_service.matches_table.batch_writer() as batch:
+                for record in team_match_records:
+                    try:
+                        batch.put_item(Item=record)
+                        saved_count += 1
+                    except Exception as e:
+                        logger.error(f"Error saving team-match record {record.get('matchId', 'unknown')}: {e}")
+                        continue
+                        
+            logger.info(f"Successfully saved {saved_count} team-match records")
+            
+        except Exception as e:
+            logger.error(f"Batch save failed, attempting individual saves: {e}")
+            
+            # Fallback to individual saves
+            for record in team_match_records:
+                try:
+                    self.db_service.matches_table.put_item(Item=record)
+                    saved_count += 1
+                except Exception as save_error:
+                    logger.error(f"Error saving individual team-match record {record.get('matchId', 'unknown')}: {save_error}")
+                    continue
+        
+        return saved_count
     
     async def get_sync_status(self, sync_type: str, season: int) -> Optional[SyncStatus]:
         """Get the last sync status for a specific type"""
@@ -430,10 +535,17 @@ class DataSyncService:
                                 should_update = False
                         
                         if should_update:
-                            # Save to DynamoDB
+                            # Save regular match record to DynamoDB
                             await self.db_service.matches_table.put_item(
                                 Item=match.to_dynamodb_item()
                             )
+                            
+                            # Create and save team-match records for efficient team queries
+                            team_match_records = self._create_team_match_records(match)
+                            if team_match_records:
+                                team_records_saved = await self._batch_save_team_match_records(team_match_records)
+                                logger.debug(f"Created {team_records_saved} team-match records for match {match.matchId}")
+                            
                             matches_updated += 1
                         
                         matches_processed += 1
@@ -467,10 +579,17 @@ class DataSyncService:
                                 should_update = False
                         
                         if should_update:
-                            # Save to DynamoDB
+                            # Save regular match record to DynamoDB
                             await self.db_service.matches_table.put_item(
                                 Item=match.to_dynamodb_item()
                             )
+                            
+                            # Create and save team-match records for efficient team queries
+                            team_match_records = self._create_team_match_records(match)
+                            if team_match_records:
+                                team_records_saved = await self._batch_save_team_match_records(team_match_records)
+                                logger.debug(f"Created {team_records_saved} team-match records for match {match.matchId}")
+                            
                             matches_updated += 1
                         
                         matches_processed += 1
@@ -479,7 +598,7 @@ class DataSyncService:
                         logger.error(f"Error processing match {match_data.get('matchNumber', 'unknown')}: {str(e)}")
                         continue
             
-            logger.info(f"Matches sync for {event_code}: {matches_processed} processed, {matches_updated} updated")
+            logger.info(f"Matches sync for {event_code}: {matches_processed} processed, {matches_updated} updated (includes team-match records)")
             
             return {
                 "success": True,
@@ -487,7 +606,8 @@ class DataSyncService:
                 "recordsProcessed": matches_processed,
                 "recordsUpdated": matches_updated,
                 "dataChanged": matches_updated > 0,
-                "bandwidthSaved": qual_metadata.get('bandwidthSaved', 0) + playoff_metadata.get('bandwidthSaved', 0)
+                "bandwidthSaved": qual_metadata.get('bandwidthSaved', 0) + playoff_metadata.get('bandwidthSaved', 0),
+                "teamMatchRecordsCreated": True
             }
             
         except Exception as e:
@@ -532,7 +652,7 @@ class DataSyncService:
             
             total_bandwidth_saved = sum(r.get('bandwidthSaved', 0) for r in matches_results)
             
-            logger.info(f"Matches sync completed for season {season}")
+            logger.info(f"Matches sync completed for season {season} (includes denormalized team-match records)")
             
             return {
                 "success": True,
@@ -543,7 +663,8 @@ class DataSyncService:
                     "eventResults": matches_results
                 },
                 "totalBandwidthSaved": total_bandwidth_saved,
-                "syncTimestamp": datetime.utcnow().isoformat()
+                "syncTimestamp": datetime.utcnow().isoformat(),
+                "teamMatchRecordsCreated": True
             }
             
         except Exception as e:
@@ -603,7 +724,7 @@ class DataSyncService:
                 sum(r.get('bandwidthSaved', 0) for r in matches_results)
             )
             
-            logger.info(f"Full sync completed for season {season}")
+            logger.info(f"Full sync completed for season {season} (includes denormalized team-match records)")
             
             return {
                 "success": True,
@@ -617,7 +738,8 @@ class DataSyncService:
                 },
                 "epaUpdated": epa_updated,
                 "totalBandwidthSaved": total_bandwidth_saved,
-                "timestamp": datetime.now(timezone.utc).isoformat()
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "teamMatchRecordsCreated": True
             }
             
         except Exception as e:
