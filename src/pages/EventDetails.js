@@ -23,6 +23,8 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import VerifiedIcon from '@mui/icons-material/Verified';
 import Link from '@mui/material/Link';
 import AllianceMatchmaker from '../components/AllianceMatchmaker';
+import AddMatches from '../components/AddMatches';
+import { getCurrentUser } from 'aws-amplify/auth';
 
 const EventDetails = () => {
   const { season, eventCode } = useParams();
@@ -34,6 +36,7 @@ const EventDetails = () => {
   const [activeTab, setActiveTab] = useState(0);
   const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
   const [teamEPAs, setTeamEPAs] = useState({});
+  const [isAdmin, setIsAdmin] = useState(false);
   const ftcApi = new FTCApi();
 
   const fetchEventData = async () => {
@@ -75,7 +78,17 @@ const EventDetails = () => {
     if (season && eventCode) {
       fetchEventData();
     }
+    checkAdminStatus();
   }, [season, eventCode]);
+
+  const checkAdminStatus = async () => {
+    try {
+      const user = await getCurrentUser();
+      setIsAdmin(!!user); // Set to true if user exists (logged in)
+    } catch (error) {
+      setIsAdmin(false); // User not logged in
+    }
+  };
 
   const sortedMatches = React.useMemo(() => {
     // Filter for qualification matches and sort by match number
@@ -131,6 +144,11 @@ const EventDetails = () => {
     }
   };
 
+  const handleMatchesAdded = (newMatches) => {
+    // Refresh the event data to include the newly added matches
+    fetchEventData();
+  };
+
   return (
     <Container maxWidth="lg" sx={{ mt: 4 }}>
       <Paper elevation={3} sx={{ p: 3, mb: 4 }}>
@@ -151,6 +169,7 @@ const EventDetails = () => {
           <Tab label="Event Details" />
           <Tab label="Matches" />
           <Tab label="Alliance Matchmaker" />
+          {isAdmin && <Tab label="Add Matches" />}
         </Tabs>
   
         {activeTab === 0 ? (
@@ -271,6 +290,13 @@ const EventDetails = () => {
             eventCode={eventCode}
             teams={teams}
             teamEPAs={teamEPAs}
+          />
+        ) : activeTab === 3 && isAdmin ? (
+          <AddMatches
+            season={Number(season)}
+            eventCode={eventCode}
+            teams={teams}
+            onMatchesAdded={handleMatchesAdded}
           />
         ) : null}
       </Paper>

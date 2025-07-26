@@ -398,6 +398,33 @@ class FTCApi {
             throw error;
         }
     }
+
+    // Admin Methods
+    async addMatches(matches, season, eventCode) {
+        try {
+            console.log('Adding matches to database via AWS Lambda:', { matches, season, eventCode });
+            
+            // Use the AWS API Gateway endpoint for admin functions
+            const response = await this.axiosInstance.post('/admin/matches', {
+                matches,
+                season,
+                eventCode
+            });
+            
+            return response.data;
+        } catch (error) {
+            console.error('Error adding matches via AWS Lambda:', error);
+            
+            // Provide more specific error information
+            if (error.response?.status === 403) {
+                throw new Error('Admin authorization required. Please ensure you are logged in as an administrator.');
+            } else if (error.response?.status === 404) {
+                throw new Error('Admin API endpoint not found. The Lambda function may not be deployed yet.');
+            } else {
+                throw new Error(error.response?.data?.message || error.message || 'Failed to add matches');
+            }
+        }
+    }
 }
 
 export default FTCApi;

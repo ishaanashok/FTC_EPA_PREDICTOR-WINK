@@ -1,0 +1,76 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Admin Matches functionality for FTC Predictor'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: stage
+    Description: Deployment environment
+
+Resources:
+  # Admin Matches Lambda Function
+  AdminMatchesFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'ftc-admin-matches-${Environment}'
+      Runtime: python3.11
+      Handler: lambda_function.lambda_handler
+      Code:
+        ZipFile: |
+          import json
+          def lambda_handler(event, context):
+              return {
+                  'statusCode': 200,
+                  'headers': {'Access-Control-Allow-Origin': '*'},
+                  'body': json.dumps({'message': 'Placeholder - upload actual code'})
+              }
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          DYNAMODB_TABLE_NAME: !Sub 'FTC_Matches_${Environment}'
+      Role: !GetAtt AdminMatchesLambdaRole.Arn
+      Timeout: 30
+      MemorySize: 256
+
+  # IAM Role for Admin Matches Lambda
+  AdminMatchesLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'ftc-admin-matches-role-${Environment}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:GetItem
+                  - dynamodb:BatchWriteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource:
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/FTC_Matches_${Environment}'
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/FTC_Matches_${Environment}/index/*'
+
+Outputs:
+  AdminMatchesFunctionArn:
+    Description: 'ARN of the Admin Matches Lambda Function'
+    Value: !GetAtt AdminMatchesFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-AdminMatchesFunction-Arn'
+  
+  AdminMatchesFunctionName:
+    Description: 'Name of the Admin Matches Lambda Function'
+    Value: !Ref AdminMatchesFunction
+    Export:
+      Name: !Sub '${AWS::StackName}-AdminMatchesFunction-Name'
