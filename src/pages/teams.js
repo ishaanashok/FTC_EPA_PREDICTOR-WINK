@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import FTCApi from '../services/ftcapi';  // Fixed import path
+import FTCApi from '../services/FTCApi';  // Fixed import path
 import '../styles/Teams.css';
 import { Button } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
@@ -39,22 +39,22 @@ function Teams() {
             if (searchParams.teamNumber) {
                 const params = { page: currentPage, ...searchParams };
                 const response = await ftcApi.getTeams(2024, params);
-                setTeams(response.teams || []);
-                setFilteredTeams(response.teams || []);
+                setTeams(response || []);
+                setFilteredTeams(response || []);
             } else if (searchParams.search) {
                 const response = await ftcApi.getTeams(2024, {});
-                const allTeamsData = response.teams || [];
+                const allTeamsData = response || [];
                 setAllTeams(allTeamsData);
                 const filtered = allTeamsData.filter(team =>
-                    team.nameShort.toLowerCase().includes(searchParams.search.toLowerCase())
+                    team.teamName && team.teamName.toLowerCase().includes(searchParams.search.toLowerCase())
                 );
                 setFilteredTeams(filtered);
                 setTeams(filtered);
             } else {
                 const params = { page: currentPage };
                 const response = await ftcApi.getTeams(2024, params);
-                setTeams(response.teams || []);
-                setFilteredTeams(response.teams || []);
+                setTeams(response || []);
+                setFilteredTeams(response || []);
             }
         } catch (err) {
             setError('Failed to fetch teams');
@@ -121,8 +121,8 @@ function Teams() {
                                 onClick={() => navigate(`/team/${team.teamNumber}`)}
                             >
                                 <h3>Team {team.teamNumber}</h3>
-                                <p className="team-name">{team.nameShort}</p>
-                                <p className="team-location">{team.city}, {team.stateProv}</p>
+                                <p className="team-name">{team.teamName}</p>
+                                <p className="team-location">{team.city}{team.state && `, ${team.state}`}</p>
                                 <p className="team-country">{team.country}</p>
                             </div>
                         ))}

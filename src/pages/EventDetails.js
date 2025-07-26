@@ -17,7 +17,7 @@ import {
   Tab,
   TableSortLabel
 } from '@mui/material';
-import FTCApi from '../services/ftcapi';
+import FTCApi from '../services/FTCApi';
 import { IconButton } from '@mui/material';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import VerifiedIcon from '@mui/icons-material/Verified';

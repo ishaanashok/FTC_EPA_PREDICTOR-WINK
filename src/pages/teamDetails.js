@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import FTCApi from '../services/ftcapi';
+import FTCApi from '../services/FTCApi';
 import '../styles/TeamDetails.css';
 
 const ftcApi = new FTCApi();

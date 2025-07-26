@@ -265,7 +265,7 @@ Resources:
     Properties:
       FunctionName: !Sub 'ftc-data-sync-${Environment}'
       Runtime: python3.11
-      Handler: lambda_function.lambda_handler
+      Handler: lambda_function.handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Code:
         S3Bucket: !If [CreateNewBucket, !Ref LambdaDeploymentBucket, !Ref ExistingLambdaDeploymentBucket]
@@ -293,7 +293,7 @@ Resources:
     Properties:
       FunctionName: !Sub 'ftc-teams-api-${Environment}'
       Runtime: python3.11
-      Handler: lambda_function.lambda_handler
+      Handler: lambda_function.handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Code:
         S3Bucket: !If [CreateNewBucket, !Ref LambdaDeploymentBucket, !Ref ExistingLambdaDeploymentBucket]
@@ -312,7 +312,7 @@ Resources:
     Properties:
       FunctionName: !Sub 'ftc-events-api-${Environment}'
       Runtime: python3.11
-      Handler: lambda_function.lambda_handler
+      Handler: lambda_function.handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Code:
         S3Bucket: !If [CreateNewBucket, !Ref LambdaDeploymentBucket, !Ref ExistingLambdaDeploymentBucket]
@@ -331,7 +331,7 @@ Resources:
     Properties:
       FunctionName: !Sub 'ftc-matches-api-${Environment}'
       Runtime: python3.11
-      Handler: lambda_function.lambda_handler
+      Handler: lambda_function.handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Code:
         S3Bucket: !If [CreateNewBucket, !Ref LambdaDeploymentBucket, !Ref ExistingLambdaDeploymentBucket]
@@ -350,7 +350,7 @@ Resources:
     Properties:
       FunctionName: !Sub 'ftc-epa-api-${Environment}'
       Runtime: python3.11
-      Handler: lambda_function.lambda_handler
+      Handler: lambda_function.handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Code:
         S3Bucket: !If [CreateNewBucket, !Ref LambdaDeploymentBucket, !Ref ExistingLambdaDeploymentBucket]
@@ -370,7 +370,7 @@ Resources:
     Properties:
       FunctionName: !Sub 'ftc-alliance-matchmaker-${Environment}'
       Runtime: python3.11
-      Handler: lambda_function.lambda_handler
+      Handler: lambda_function.handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Code:
         S3Bucket: !If [CreateNewBucket, !Ref LambdaDeploymentBucket, !Ref ExistingLambdaDeploymentBucket]
