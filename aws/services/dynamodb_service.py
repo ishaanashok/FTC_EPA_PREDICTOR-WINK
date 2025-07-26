@@ -172,7 +172,7 @@ class DynamoDBService:
             logger.error(f"Error getting event {event_code} for season {season}: {str(e)}")
             return None
     
-    async def get_events_by_season(self, season: int, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+    def get_events_by_season(self, season: int, limit: Optional[int] = None) -> List[Dict[str, Any]]:
         """Get all events for a season"""
         try:
             query_kwargs = {
@@ -343,7 +343,7 @@ class DynamoDBService:
         
         return team_epas
     
-    async def batch_save_matches(self, matches: List[Dict[str, Any]]) -> bool:
+    def batch_save_matches(self, matches: List[Dict[str, Any]]) -> bool:
         """Save multiple matches efficiently (expects DynamoDB items)"""
         try:
             with self.matches_table.batch_writer() as batch:
@@ -357,7 +357,7 @@ class DynamoDBService:
             logger.error(f"Error batch saving matches: {str(e)}")
             return False
     
-    async def batch_save_teams(self, teams: List[Dict[str, Any]]) -> bool:
+    def batch_save_teams(self, teams: List[Dict[str, Any]]) -> bool:
         """Save multiple teams efficiently"""
         try:
             with self.teams_table.batch_writer() as batch:
@@ -371,7 +371,7 @@ class DynamoDBService:
             logger.error(f"Error batch saving teams: {str(e)}")
             return False
     
-    async def batch_save_events(self, events: List[Dict[str, Any]]) -> bool:
+    def batch_save_events(self, events: List[Dict[str, Any]]) -> bool:
         """Save multiple events efficiently"""
         try:
             with self.events_table.batch_writer() as batch:
