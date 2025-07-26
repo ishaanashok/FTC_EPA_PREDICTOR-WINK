@@ -6,9 +6,9 @@
 set -e
 
 # Configuration
-ENVIRONMENT=${1:-dev}
+ENVIRONMENT=${1:-stage}
 AWS_REGION=${2:-us-east-1}
-EXISTING_BUCKET=${3:-""}
+EXISTING_BUCKET=${3:-"ftc-lambda-deployment-stage-843578292678"}
 STACK_NAME="ftc-predictor-${ENVIRONMENT}"
 S3_BUCKET_PREFIX="ftc-lambda-deployment-${ENVIRONMENT}"
 
@@ -135,13 +135,12 @@ build_lambda_functions() {
     mkdir -p build/layers/common/python
     
     # Copy requirements and install dependencies
+    # Note: boto3, botocore, urllib3, jmespath, s3transfer, six, python-dateutil, and simplejson 
+    # are already available in Lambda runtime - no need to include them
     cat > build/layers/common/requirements.txt << EOF
-boto3>=1.34.0
-botocore>=1.34.0
 pydantic>=1.10.0,<2.0.0
 aiohttp>=3.9.1
 python-dotenv>=1.0.0
-requests>=2.31.0
 typing-extensions>=4.8.0
 EOF
     

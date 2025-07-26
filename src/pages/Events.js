@@ -19,7 +19,7 @@ import {
   CardActionArea,
 } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
-import FTCApi from '../services/ftcapi';
+import FTCApi from '../services/FTCApi';
 import PageTransition from '../components/PageTransition';
 
 function Events() {
