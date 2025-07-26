@@ -68,27 +68,44 @@ class MatchesApiService:
         return transformed_match
     
     async def enrich_matches_with_teams(self, matches: List[Dict[str, Any]], season: int, event_code: str) -> List[Dict[str, Any]]:
-        """Add empty team structure to matches for frontend compatibility"""
+        """Check if matches already have team data, otherwise add empty structure"""
         try:
-            # For now, just add empty team arrays to prevent frontend errors
-            # TODO: Implement team assignment lookup once FTC API dependencies are resolved
             enriched_matches = []
+            
             for match in matches:
                 enriched_match = match.copy()
-                # Add empty team structure for frontend compatibility
-                enriched_match['teams'] = []
-                enriched_match['redTeams'] = []
-                enriched_match['blueTeams'] = []
-                if 'allTeams' not in enriched_match:
+                
+                # Check if match already has team data
+                existing_teams = match.get('teams', [])
+                existing_red_teams = match.get('redTeams', [])
+                existing_blue_teams = match.get('blueTeams', [])
+                existing_all_teams = match.get('allTeams', [])
+                
+                if (existing_teams and len(existing_teams) > 0) or \
+                   (existing_red_teams and len(existing_red_teams) > 0) or \
+                   (existing_blue_teams and len(existing_blue_teams) > 0) or \
+                   (existing_all_teams and len(existing_all_teams) > 0):
+                    # Match already has team data, keep it as is
+                    logger.debug(f"Match {match.get('matchNumber')} already has team assignments")
+                    enriched_matches.append(enriched_match)
+                else:
+                    # Add empty team structure for frontend compatibility
+                    enriched_match['teams'] = []
+                    enriched_match['redTeams'] = []
+                    enriched_match['blueTeams'] = []
                     enriched_match['allTeams'] = []
-                enriched_matches.append(enriched_match)
+                    enriched_matches.append(enriched_match)
             
-            logger.info(f"Added empty team structure to {len(enriched_matches)} matches")
+            matches_with_teams = sum(1 for m in enriched_matches if 
+                                   (m.get('teams') and len(m['teams']) > 0) or
+                                   (m.get('redTeams') and len(m['redTeams']) > 0) or
+                                   (m.get('blueTeams') and len(m['blueTeams']) > 0) or
+                                   (m.get('allTeams') and len(m['allTeams']) > 0))
+            logger.info(f"Processed {len(enriched_matches)} matches, {matches_with_teams} have team assignments")
             return enriched_matches
             
         except Exception as e:
-            logger.error(f"Error adding team structure to matches: {str(e)}")
-            # Return original matches if enrichment fails
+            logger.error(f"Error processing matches: {str(e)}")
             return matches
     
     async def get_matches(self, season: int, event_code: Optional[str] = None,
