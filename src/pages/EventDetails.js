@@ -54,7 +54,7 @@ const EventDetails = () => {
             console.log('Received event data:', eventData);
             setEventDetails(eventData.eventDetails);
             setTeams(eventData.teams || []);
-            setTeamEPAs(eventData.teamEPAs || {});
+            setTeamEPAs(eventData.epas || eventData.teamEPAs || {});
             
             const matchesArray = eventData.matches || [];
             const predictionsArray = eventData.predictions || [];
@@ -200,10 +200,10 @@ const EventDetails = () => {
                     {teams.map((team) => (
                       <TableRow key={team.teamNumber} hover>
                         <TableCell>{team.teamNumber}</TableCell>
-                        <TableCell>{team.nameShort || team.nameFull}</TableCell>
+                        <TableCell>{team.teamName || team.nameShort || team.nameFull}</TableCell>
                         <TableCell>{team.schoolName}</TableCell>
-                        <TableCell>{`${team.city}, ${team.stateProv}`}</TableCell>
-                        <TableCell>{teamEPAs[team.teamNumber]?.toFixed(1) || '0.0'}</TableCell>
+                        <TableCell>{`${team.city}, ${team.stateProv || team.state}`}</TableCell>
+                        <TableCell>{teamEPAs[`${team.teamNumber}.0`]?.toFixed(1) || teamEPAs[team.teamNumber.toString()]?.toFixed(1) || teamEPAs[team.teamNumber]?.toFixed(1) || '0.0'}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>

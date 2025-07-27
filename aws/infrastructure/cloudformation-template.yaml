@@ -425,14 +425,17 @@ Resources:
       - EventsApiEventCodeResource
       - MatchesApiResource
       - EPAApiResource
+      - EPAApiTeamNumberResource
       - AllianceApiResource
       - EventsApiGetMethod
       - EventsApiEventCodeGetMethod
       - TeamsApiGetMethod
       - MatchesApiGetMethod
+      - EPAApiGetMethod
       - EventsApiOptionsMethod
       - EventsApiEventCodeOptionsMethod
       - TeamsApiOptionsMethod
+      - EPAApiOptionsMethod
       - OptionsMethod
     Properties:
       RestApiId: !Ref FTCApiGateway
@@ -480,6 +483,13 @@ Resources:
       RestApiId: !Ref FTCApiGateway
       ParentId: !Ref ApiResource
       PathPart: epa
+
+  EPAApiTeamNumberResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref FTCApiGateway
+      ParentId: !Ref EPAApiResource
+      PathPart: '{teamNumber}'
 
   AllianceApiResource:
     Type: AWS::ApiGateway::Resource
@@ -684,6 +694,55 @@ Resources:
           ResponseParameters:
             method.response.header.Access-Control-Allow-Origin: false
 
+  # EPA API Methods
+  EPAApiGetMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref FTCApiGateway
+      ResourceId: !Ref EPAApiTeamNumberResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${EPAApiLambda.Arn}/invocations'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: false
+
+  # EPA API Options for CORS
+  EPAApiOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref FTCApiGateway
+      ResourceId: !Ref EPAApiTeamNumberResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates:
+              application/json: ''
+        PassthroughBehavior: WHEN_NO_MATCH
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: false
+            method.response.header.Access-Control-Allow-Methods: false
+            method.response.header.Access-Control-Allow-Origin: false
+
   # Lambda Permissions for API Gateway
   EventsApiLambdaPermission:
     Type: AWS::Lambda::Permission
@@ -705,6 +764,14 @@ Resources:
     Type: AWS::Lambda::Permission
     Properties:
       FunctionName: !Ref MatchesApiLambda
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${FTCApiGateway}/*/*'
+
+  EPAApiLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref EPAApiLambda
       Action: lambda:InvokeFunction
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${FTCApiGateway}/*/*'

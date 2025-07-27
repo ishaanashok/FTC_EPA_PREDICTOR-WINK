@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from boto3.dynamodb.conditions import Key, Attr
 from botocore.exceptions import ClientError
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +16,9 @@ class DynamoDBService:
     def __init__(self, environment: str = 'dev'):
         self.dynamodb = boto3.resource('dynamodb')
         self.environment = environment
+        
+        # Initialize simple in-memory cache for EPA calculations
+        self._cache = {}
         
         # Initialize tables
         # Ensure self.dynamodb is a boto3 DynamoDB resource, which has the Table attribute
@@ -59,7 +63,7 @@ class DynamoDBService:
         return result
     
     # Team operations
-    async def get_team(self, team_number: int, season: int) -> Optional[Dict[str, Any]]:
+    def get_team(self, team_number: int, season: int) -> Optional[Dict[str, Any]]:
         """Get a specific team"""
         try:
             response = self.teams_table.get_item(
@@ -74,7 +78,7 @@ class DynamoDBService:
             logger.error(f"Error getting team {team_number} for season {season}: {str(e)}")
             return None
     
-    async def get_teams_by_season(self, season: int, limit: int = 100) -> List[Dict[str, Any]]:
+    def get_teams_by_season(self, season: int, limit: int = 100) -> List[Dict[str, Any]]:
         """Get all teams for a season"""
         try:
             response = self.teams_table.query(
@@ -93,16 +97,16 @@ class DynamoDBService:
             logger.error(f"Error getting teams for season {season}: {str(e)}")
             return []
     
-    async def get_teams_by_event(self, season: int, event_code: str) -> List[Dict[str, Any]]:
+    def get_teams_by_event(self, season: int, event_code: str) -> List[Dict[str, Any]]:
         """Get teams participating in a specific event"""
         try:
             # First try to get teams from event's teamNumbers field
-            teams = await self.get_teams_by_event_from_roster(season, event_code)
+            teams = self.get_teams_by_event_from_roster(season, event_code)
             if teams:
                 return teams
             
             # Fallback to old method (get from matches)
-            matches = await self.get_matches_by_event(season, event_code)
+            matches = self.get_matches_by_event(season, event_code)
             
             # Extract unique team numbers
             team_numbers = set()
@@ -112,7 +116,7 @@ class DynamoDBService:
             # Get team details
             teams = []
             for team_number in team_numbers:
-                team = await self.get_team(team_number, season)
+                team = self.get_team(team_number, season)
                 if team:
                     teams.append(team)
             
@@ -122,11 +126,11 @@ class DynamoDBService:
             logger.error(f"Error getting teams for event {event_code}: {str(e)}")
             return []
     
-    async def get_teams_by_event_from_roster(self, season: int, event_code: str) -> List[Dict[str, Any]]:
+    def get_teams_by_event_from_roster(self, season: int, event_code: str) -> List[Dict[str, Any]]:
         """Get teams participating in a specific event from event's team roster"""
         try:
             # Get the event to get team numbers
-            event = await self.get_event(event_code, season)
+            event = self.get_event(event_code, season)
             
             if not event or not event.get('teamNumbers'):
                 logger.info(f"No team numbers found in event roster for {event_code} in season {season}")
@@ -143,7 +147,7 @@ class DynamoDBService:
             # Get team details
             teams = []
             for team_number in team_numbers:
-                team = await self.get_team(team_number, season)
+                team = self.get_team(team_number, season)
                 if team:
                     teams.append(team)
                 else:
@@ -157,7 +161,7 @@ class DynamoDBService:
             return []
     
     # Event operations
-    async def get_event(self, event_code: str, season: int) -> Optional[Dict[str, Any]]:
+    def get_event(self, event_code: str, season: int) -> Optional[Dict[str, Any]]:
         """Get a specific event"""
         try:
             response = self.events_table.get_item(
@@ -172,7 +176,7 @@ class DynamoDBService:
             logger.error(f"Error getting event {event_code} for season {season}: {str(e)}")
             return None
     
-    async def get_events_by_season(self, season: int, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+    def get_events_by_season(self, season: int, limit: Optional[int] = None) -> List[Dict[str, Any]]:
         """Get all events for a season"""
         try:
             query_kwargs = {
@@ -195,28 +199,6 @@ class DynamoDBService:
             logger.error(f"Error getting events for season {season}: {str(e)}")
             return []
     
-    async def get_events_by_team(self, season: int, team_number: int) -> List[Dict[str, Any]]:
-        """Get events that a specific team participated in"""
-        try:
-            # Get all events for the season
-            events = await self.get_events_by_season(season)
-            
-            # Filter events where the team participated
-            team_events = []
-            for event in events:
-                team_numbers_str = event.get('teamNumbers', '')
-                if team_numbers_str:
-                    # Parse comma-separated team numbers
-                    team_numbers = [int(num.strip()) for num in team_numbers_str.split(',') if num.strip()]
-                    if team_number in team_numbers:
-                        team_events.append(event)
-            
-            return team_events
-            
-        except Exception as e:
-            logger.error(f"Error getting events for team {team_number} in season {season}: {str(e)}")
-            return []
-
     # Match operations
     async def get_match(self, match_id: str) -> Optional[Dict[str, Any]]:
         """Get a specific match"""
@@ -349,6 +331,88 @@ class DynamoDBService:
             logger.error(f"Error saving EPA calculation for team {team_number}: {str(e)}")
             return False
     
+    # Cache operations for EPA calculations
+    async def get_cache(self, key: str) -> Optional[Any]:
+        """Get value from cache if it exists and hasn't expired"""
+        try:
+            if key not in self._cache:
+                return None
+            
+            cache_entry = self._cache[key]
+            current_time = time.time()
+            
+            # Check if cache entry has expired
+            if current_time > cache_entry['expires_at']:
+                # Remove expired entry
+                del self._cache[key]
+                return None
+            
+            logger.debug(f"Cache hit for key: {key}")
+            return cache_entry['value']
+            
+        except Exception as e:
+            logger.warning(f"Error getting cache for key {key}: {e}")
+            return None
+    
+    async def set_cache(self, key: str, value: Any, ttl_seconds: int = 3600) -> bool:
+        """Set value in cache with TTL (default 1 hour)"""
+        try:
+            expires_at = time.time() + ttl_seconds
+            
+            self._cache[key] = {
+                'value': value,
+                'expires_at': expires_at,
+                'created_at': time.time()
+            }
+            
+            # Clean up expired entries periodically (every 100 cache sets)
+            if len(self._cache) % 100 == 0:
+                await self._cleanup_expired_cache()
+            
+            logger.debug(f"Cache set for key: {key}, TTL: {ttl_seconds}s")
+            return True
+            
+        except Exception as e:
+            logger.warning(f"Error setting cache for key {key}: {e}")
+            return False
+    
+    async def _cleanup_expired_cache(self):
+        """Remove expired cache entries"""
+        try:
+            current_time = time.time()
+            expired_keys = []
+            
+            for key, entry in self._cache.items():
+                if current_time > entry['expires_at']:
+                    expired_keys.append(key)
+            
+            for key in expired_keys:
+                del self._cache[key]
+            
+            if expired_keys:
+                logger.debug(f"Cleaned up {len(expired_keys)} expired cache entries")
+                
+        except Exception as e:
+            logger.warning(f"Error cleaning up cache: {e}")
+    
+    def clear_cache(self):
+        """Clear all cache entries"""
+        self._cache.clear()
+        logger.debug("Cache cleared")
+    
+    def get_cache_stats(self) -> Dict[str, Any]:
+        """Get cache statistics"""
+        current_time = time.time()
+        total_entries = len(self._cache)
+        expired_entries = sum(1 for entry in self._cache.values() 
+                            if current_time > entry['expires_at'])
+        
+        return {
+            'total_entries': total_entries,
+            'active_entries': total_entries - expired_entries,
+            'expired_entries': expired_entries
+        }
+    
     # Batch operations
     async def batch_get_team_epas(self, team_numbers: List[int]) -> Dict[str, float]:
         """Get EPAs for multiple teams"""
@@ -363,7 +427,7 @@ class DynamoDBService:
         
         return team_epas
     
-    async def batch_save_matches(self, matches: List[Dict[str, Any]]) -> bool:
+    def batch_save_matches(self, matches: List[Dict[str, Any]]) -> bool:
         """Save multiple matches efficiently (expects DynamoDB items)"""
         try:
             with self.matches_table.batch_writer() as batch:
@@ -377,7 +441,7 @@ class DynamoDBService:
             logger.error(f"Error batch saving matches: {str(e)}")
             return False
     
-    async def batch_save_teams(self, teams: List[Dict[str, Any]]) -> bool:
+    def batch_save_teams(self, teams: List[Dict[str, Any]]) -> bool:
         """Save multiple teams efficiently"""
         try:
             with self.teams_table.batch_writer() as batch:
@@ -391,7 +455,7 @@ class DynamoDBService:
             logger.error(f"Error batch saving teams: {str(e)}")
             return False
     
-    async def batch_save_events(self, events: List[Dict[str, Any]]) -> bool:
+    def batch_save_events(self, events: List[Dict[str, Any]]) -> bool:
         """Save multiple events efficiently"""
         try:
             with self.events_table.batch_writer() as batch:
@@ -403,4 +467,4 @@ class DynamoDBService:
             
         except ClientError as e:
             logger.error(f"Error batch saving events: {str(e)}")
-            return False
+            return False 

@@ -39,11 +39,12 @@ function Teams() {
             if (searchParams.teamNumber) {
                 const params = { page: currentPage, ...searchParams };
                 const response = await ftcApi.getTeams(2024, params);
-                setTeams(response || []);
-                setFilteredTeams(response || []);
+                const teamsData = response?.teams || [];
+                setTeams(teamsData);
+                setFilteredTeams(teamsData);
             } else if (searchParams.search) {
                 const response = await ftcApi.getTeams(2024, {});
-                const allTeamsData = response || [];
+                const allTeamsData = response?.teams || [];
                 setAllTeams(allTeamsData);
                 const filtered = allTeamsData.filter(team =>
                     team.teamName && team.teamName.toLowerCase().includes(searchParams.search.toLowerCase())
@@ -53,8 +54,9 @@ function Teams() {
             } else {
                 const params = { page: currentPage };
                 const response = await ftcApi.getTeams(2024, params);
-                setTeams(response || []);
-                setFilteredTeams(response || []);
+                const teamsData = response?.teams || [];
+                setTeams(teamsData);
+                setFilteredTeams(teamsData);
             }
         } catch (err) {
             setError('Failed to fetch teams');

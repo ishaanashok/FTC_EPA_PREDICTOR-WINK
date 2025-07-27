@@ -324,22 +324,47 @@ class EPACalculator:
                 
                 # Get alliance score breakdown from our data structure
                 if team_alliance == 'Red':
-                    auto_points = float(match.get('scoreRedAuto', 0))
-                    teleop_points = float(match.get('scoreRedTeleop', 0))
-                    endgame_points = float(match.get('scoreRedEndgame', 0))
+                    alliance_score = match.get('redScore', {})
+                    if alliance_score:
+                        auto_points = float(alliance_score.get('autoPoints') or 0)
+                        total_points = float(alliance_score.get('totalPoints') or 0)
+                        penalty_points = float(alliance_score.get('penaltyPoints') or 0)
+                        # FTC API doesn't separate teleop and endgame - calculate combined
+                        teleop_endgame_points = total_points - auto_points - penalty_points
+                        teleop_points = teleop_endgame_points * 0.7  # Assume 70% teleop, 30% endgame
+                        endgame_points = teleop_endgame_points * 0.3
+                    else:
+                        # Fallback to top-level format
+                        auto_points = float(match.get('scoreRedAuto') or 0)
+                        total_points = float(match.get('scoreRedFinal') or 0)
+                        penalty_points = float(match.get('scoreRedPenalty') or 0)
+                        teleop_endgame_points = total_points - auto_points - penalty_points
+                        teleop_points = teleop_endgame_points * 0.7
+                        endgame_points = teleop_endgame_points * 0.3
                     alliance_teams = len(red_teams_int)
                 else:
-                    auto_points = float(match.get('scoreBlueAuto', 0))
-                    teleop_points = float(match.get('scoreBlueTeleop', 0))
-                    endgame_points = float(match.get('scoreBlueEndgame', 0))
+                    alliance_score = match.get('blueScore', {})
+                    if alliance_score:
+                        auto_points = float(alliance_score.get('autoPoints') or 0)
+                        total_points = float(alliance_score.get('totalPoints') or 0)
+                        penalty_points = float(alliance_score.get('penaltyPoints') or 0)
+                        # FTC API doesn't separate teleop and endgame - calculate combined
+                        teleop_endgame_points = total_points - auto_points - penalty_points
+                        teleop_points = teleop_endgame_points * 0.7  # Assume 70% teleop, 30% endgame
+                        endgame_points = teleop_endgame_points * 0.3
+                    else:
+                        # Fallback to top-level format
+                        auto_points = float(match.get('scoreBlueAuto') or 0)
+                        total_points = float(match.get('scoreBlueFinal') or 0)
+                        penalty_points = float(match.get('scoreBluePenalty') or 0)
+                        teleop_endgame_points = total_points - auto_points - penalty_points
+                        teleop_points = teleop_endgame_points * 0.7
+                        endgame_points = teleop_endgame_points * 0.3
                     alliance_teams = len(blue_teams_int)
                 
-                # Fallback to original nested format if our format not available
-                if auto_points == 0 and teleop_points == 0 and endgame_points == 0:
-                    alliance_score = match.get('redScore' if team_alliance == 'Red' else 'blueScore', {})
-                    auto_points = alliance_score.get('autoPoints', 0)
-                    teleop_points = alliance_score.get('teleopPoints', 0)
-                    endgame_points = alliance_score.get('endgamePoints', 0)
+                # Skip matches with no meaningful score data
+                if total_points == 0 and auto_points == 0:
+                    continue
                 
                 # Fallback team count if needed
                 if alliance_teams == 0:

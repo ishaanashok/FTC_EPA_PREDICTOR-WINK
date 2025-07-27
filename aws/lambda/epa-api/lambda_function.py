@@ -189,6 +189,39 @@ async def lambda_handler(event, context):
                 historical = query_parameters.get('historical', '').lower() == 'true'
                 result = await api_service.get_team_epa(team_number, historical)
             
+            # Check if event EPA data requested
+            elif query_parameters.get('eventCode'):
+                event_code = query_parameters.get('eventCode')
+                season = int(query_parameters.get('season', 2024))
+                
+                # Get teams for this event
+                from services.dynamodb_service import DynamoDBService
+                db_service = DynamoDBService(os.environ.get('ENVIRONMENT', 'dev'))
+                teams = await db_service.get_teams_by_event(season, event_code)
+                
+                # Get EPA for each team
+                epas = {}
+                for team in teams:
+                    team_number = team.get('teamNumber')
+                    if team_number:
+                        try:
+                            epa_data = await db_service.get_latest_epa(int(team_number))
+                            if epa_data and 'historicalEPA' in epa_data:
+                                epas[str(team_number)] = epa_data['historicalEPA']
+                            else:
+                                epas[str(team_number)] = 50.0  # Default EPA
+                        except Exception as e:
+                            logger.warning(f"Failed to get EPA for team {team_number}: {e}")
+                            epas[str(team_number)] = 50.0  # Default EPA
+                
+                result = {
+                    "success": True,
+                    "eventCode": event_code,
+                    "season": season,
+                    "epas": epas,
+                    "teamCount": len(teams)
+                }
+            
             # Check if multiple teams requested
             elif 'teams' in query_parameters:
                 team_numbers_str = query_parameters['teams']
@@ -213,7 +246,7 @@ async def lambda_handler(event, context):
                         'Access-Control-Allow-Origin': '*'
                     },
                     'body': json.dumps({
-                        'error': 'Missing required parameters. Use teamNumber, teams, or top=true',
+                        'error': 'Missing required parameters. Use teamNumber, teams, eventCode, or top=true',
                         'success': False
                     })
                 }

@@ -183,7 +183,11 @@ class FTCApi {
             const response = await this.axiosInstance.get('/api/teams', { params: queryParams });
             
             if (response.data && response.data.success) {
-                return response.data.teams || [];
+                // Return in the expected format with teams array
+                return {
+                    teams: response.data.teams || [],
+                    total: response.data.total || 0
+                };
             } else {
                 throw new Error('Failed to get teams or invalid response format');
             }
@@ -291,8 +295,9 @@ class FTCApi {
         return { matches: allMatches };
     }
 
+    // Get historical EPA for a specific team
     async getHistoricalEPA(teamNumber) {
-            return this.request(`/teams/${teamNumber}/historical-epa`);
+        return this.request(`/api/epa/${teamNumber}`, { historical: 'true' });
     }
 
     async getMatches(season, eventCode) {
@@ -347,7 +352,7 @@ class FTCApi {
         // Get teams from the teams API that we just fixed
         console.log('Fetching teams from AWS Teams API...');
         const teamsResponse = await this.getTeams(season, { eventCode });
-        const teams = teamsResponse || [];
+        const teams = teamsResponse?.teams || [];
         console.log('Teams fetched from real API:', teams.length, 'teams');
         
         // Get matches for the event

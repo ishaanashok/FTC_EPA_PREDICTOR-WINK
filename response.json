@@ -1,1 +1,0 @@
-{"statusCode": 500, "body": "{\"error\": \"Invalid variable type: value should be str, int or float, got None of type <class 'NoneType'>\", \"success\": false}"}
