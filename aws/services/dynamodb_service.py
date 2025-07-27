@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from boto3.dynamodb.conditions import Key, Attr
 from botocore.exceptions import ClientError
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +16,9 @@ class DynamoDBService:
     def __init__(self, environment: str = 'dev'):
         self.dynamodb = boto3.resource('dynamodb')
         self.environment = environment
+        
+        # Initialize simple in-memory cache for EPA calculations
+        self._cache = {}
         
         # Initialize tables
         # Ensure self.dynamodb is a boto3 DynamoDB resource, which has the Table attribute
@@ -327,7 +331,87 @@ class DynamoDBService:
             logger.error(f"Error saving EPA calculation for team {team_number}: {str(e)}")
             return False
     
-    # Cache operations removed - no longer using caching layer
+    # Cache operations for EPA calculations
+    async def get_cache(self, key: str) -> Optional[Any]:
+        """Get value from cache if it exists and hasn't expired"""
+        try:
+            if key not in self._cache:
+                return None
+            
+            cache_entry = self._cache[key]
+            current_time = time.time()
+            
+            # Check if cache entry has expired
+            if current_time > cache_entry['expires_at']:
+                # Remove expired entry
+                del self._cache[key]
+                return None
+            
+            logger.debug(f"Cache hit for key: {key}")
+            return cache_entry['value']
+            
+        except Exception as e:
+            logger.warning(f"Error getting cache for key {key}: {e}")
+            return None
+    
+    async def set_cache(self, key: str, value: Any, ttl_seconds: int = 3600) -> bool:
+        """Set value in cache with TTL (default 1 hour)"""
+        try:
+            expires_at = time.time() + ttl_seconds
+            
+            self._cache[key] = {
+                'value': value,
+                'expires_at': expires_at,
+                'created_at': time.time()
+            }
+            
+            # Clean up expired entries periodically (every 100 cache sets)
+            if len(self._cache) % 100 == 0:
+                await self._cleanup_expired_cache()
+            
+            logger.debug(f"Cache set for key: {key}, TTL: {ttl_seconds}s")
+            return True
+            
+        except Exception as e:
+            logger.warning(f"Error setting cache for key {key}: {e}")
+            return False
+    
+    async def _cleanup_expired_cache(self):
+        """Remove expired cache entries"""
+        try:
+            current_time = time.time()
+            expired_keys = []
+            
+            for key, entry in self._cache.items():
+                if current_time > entry['expires_at']:
+                    expired_keys.append(key)
+            
+            for key in expired_keys:
+                del self._cache[key]
+            
+            if expired_keys:
+                logger.debug(f"Cleaned up {len(expired_keys)} expired cache entries")
+                
+        except Exception as e:
+            logger.warning(f"Error cleaning up cache: {e}")
+    
+    def clear_cache(self):
+        """Clear all cache entries"""
+        self._cache.clear()
+        logger.debug("Cache cleared")
+    
+    def get_cache_stats(self) -> Dict[str, Any]:
+        """Get cache statistics"""
+        current_time = time.time()
+        total_entries = len(self._cache)
+        expired_entries = sum(1 for entry in self._cache.values() 
+                            if current_time > entry['expires_at'])
+        
+        return {
+            'total_entries': total_entries,
+            'active_entries': total_entries - expired_entries,
+            'expired_entries': expired_entries
+        }
     
     # Batch operations
     async def batch_get_team_epas(self, team_numbers: List[int]) -> Dict[str, float]:

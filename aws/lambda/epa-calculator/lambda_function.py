@@ -48,9 +48,18 @@ class EPACalculator:
         self.k = 12  # EPA scaling factor for win probability
 
     async def calculate_team_epa(self, team_number: int, event_start_date: str = None) -> Dict[str, Any]:
-        """Calculate EPA for a team based on their historical matches"""
+        """Calculate EPA for a team based on their historical matches with caching"""
         start_time = time.time()
         logger.info(f"Calculating EPA for team {team_number}")
+        
+        # Check cache first for individual team EPA
+        cache_key = f"team_epa:{team_number}:{event_start_date or 'latest'}"
+        cached_result = await self.db_service.get_cache(cache_key)
+        
+        if cached_result:
+            calculation_time = time.time() - start_time
+            logger.info(f"Returning cached EPA for team {team_number} (took {calculation_time:.2f}s)")
+            return cached_result
         
         try:
             # Get all matches for the team across seasons
@@ -113,7 +122,7 @@ class EPACalculator:
                 'historicalEPA': historical_epa,
                 'currentSeasonEPA': current_season_epa,
                 'seasonEPAs': {
-                    season: await self.calculate_season_epa(matches, team_number) 
+                    str(season): await self.calculate_season_epa(matches, team_number) 
                     for season, matches in all_matches.items()
                 },
                 'totalMatches': sum(len(matches) for matches in all_matches.values()),
@@ -128,6 +137,14 @@ class EPACalculator:
             
             calculation_time = time.time() - start_time
             logger.info(f"EPA calculation completed for team {team_number}: {historical_epa} (took {calculation_time:.2f}s)")
+            
+            # Cache the result for 30 minutes (shorter TTL for individual teams)
+            try:
+                await self.db_service.set_cache(cache_key, epa_data, ttl_seconds=1800)
+                logger.debug(f"Cached EPA result for team {team_number}")
+            except Exception as cache_error:
+                logger.warning(f"Failed to cache EPA result for team {team_number}: {cache_error}")
+            
             return epa_data
             
         except Exception as e:
@@ -402,7 +419,7 @@ class EPACalculator:
 
     async def batch_calculate_team_epas(self, team_numbers: List[int], 
                                       event_start_date: str = None) -> Dict[str, float]:
-        """Calculate EPAs for multiple teams efficiently"""
+        """Calculate EPAs for multiple teams efficiently with caching"""
         logger.info(f"Batch calculating EPAs for {len(team_numbers)} teams")
         
         # Check cache first
@@ -410,7 +427,7 @@ class EPACalculator:
         cached_result = await self.db_service.get_cache(cache_key)
         
         if cached_result:
-            logger.info("Returning cached EPA results")
+            logger.info("Returning cached batch EPA results")
             return cached_result
         
         # Calculate EPAs
@@ -438,10 +455,18 @@ class EPACalculator:
                     team_epas[str(team_number)] = result.get('historicalEPA', 0.0)
                     
                     # Save individual EPA calculation
-                    await self.db_service.save_epa_calculation(team_number, result)
+                    try:
+                        await self.db_service.save_epa_calculation(team_number, result)
+                        logger.debug(f"Saved EPA calculation for team {team_number}")
+                    except Exception as save_error:
+                        logger.warning(f"Failed to save EPA calculation for team {team_number}: {save_error}")
         
-        # Cache the results
-        await self.db_service.set_cache(cache_key, team_epas, ttl_seconds=3600)  # 1 hour cache
+        # Cache the results for 1 hour
+        try:
+            await self.db_service.set_cache(cache_key, team_epas, ttl_seconds=3600)
+            logger.debug(f"Cached batch EPA results for {len(team_numbers)} teams")
+        except Exception as cache_error:
+            logger.warning(f"Failed to cache batch EPA results: {cache_error}")
         
         logger.info(f"Batch EPA calculation completed for {len(team_numbers)} teams")
         return team_epas
@@ -501,13 +526,24 @@ def lambda_handler(event, context):
                         epa_calculator.calculate_team_epa(team_number, event_start_date)
                     )
                     
+                    # Save EPA calculation to DynamoDB
+                    save_success = loop.run_until_complete(
+                        db_service.save_epa_calculation(team_number, epa_data)
+                    )
+                    
+                    if save_success:
+                        logger.info(f"EPA calculation saved to DynamoDB for team {team_number}")
+                    else:
+                        logger.warning(f"Failed to save EPA calculation to DynamoDB for team {team_number}")
+                    
                     return {
                         'statusCode': 200,
                         'headers': {'Content-Type': 'application/json'},
                         'body': json.dumps({
                             'teamNumber': team_number,
                             'historicalEPA': epa_data['historicalEPA'],
-                            'epaData': epa_data
+                            'epaData': epa_data,
+                            'savedToDatabase': save_success
                         }, default=str)
                     }
                 finally:
