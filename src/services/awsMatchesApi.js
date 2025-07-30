@@ -68,7 +68,7 @@ class AwsMatchesApi {
             console.log('Base URL:', this.baseUrl);
             
             // Try a simple request to see if the API is reachable
-            const response = await this.axiosInstance.get('/api/matches', {
+            const response = await this.axiosInstance.get('/matches', {
                 params: { season: 2024, eventCode: 'TEST', limit: 1 },
                 timeout: 5000
             });
@@ -117,9 +117,10 @@ class AwsMatchesApi {
      * @param {number} season - The season year (e.g., 2024)
      * @param {string} eventCode - The event code (e.g., 'USLAWAQ')
      * @param {string} tournamentLevel - 'QUALIFICATION', 'PLAYOFF', or null for all matches
+     * @param {boolean} includeWinProbability - Whether to include win probability calculations
      * @returns {Promise<Object>} Matches data
      */
-    async getEventMatches(season, eventCode, tournamentLevel = null) {
+    async getEventMatches(season, eventCode, tournamentLevel = null, includeWinProbability = false) {
         try {
             // Try the correct API path structure
             const params = {
@@ -131,11 +132,15 @@ class AwsMatchesApi {
                 params.tournamentLevel = tournamentLevel;
             }
 
+            if (includeWinProbability) {
+                params.includeWinProbability = 'true';
+            }
+
             console.log('Requesting matches with params:', params);
             console.log('Base URL:', this.baseUrl);
 
-            // Try the /api/matches path first (if it exists)
-            const response = await this.axiosInstance.get('/api/matches', { params });
+            // Try the /matches path first (matches AWS Lambda endpoint)
+            const response = await this.axiosInstance.get('/matches', { params });
             
             return {
                 success: true,
@@ -161,6 +166,10 @@ class AwsMatchesApi {
                 
                 if (tournamentLevel) {
                     params.tournamentLevel = tournamentLevel;
+                }
+
+                if (includeWinProbability) {
+                    params.includeWinProbability = 'true';
                 }
 
                 // Try direct matches endpoint
@@ -192,9 +201,10 @@ class AwsMatchesApi {
      * @param {number} teamNumber - The team number
      * @param {number} season - The season year (e.g., 2024)
      * @param {string} tournamentLevel - 'QUALIFICATION', 'PLAYOFF', or null for all matches
+     * @param {boolean} includeWinProbability - Whether to include win probability calculations
      * @returns {Promise<Object>} Matches data
      */
-    async getTeamMatches(teamNumber, season, tournamentLevel = null) {
+    async getTeamMatches(teamNumber, season, tournamentLevel = null, includeWinProbability = false) {
         try {
             const params = {
                 season: season,
@@ -205,10 +215,14 @@ class AwsMatchesApi {
                 params.tournamentLevel = tournamentLevel;
             }
 
+            if (includeWinProbability) {
+                params.includeWinProbability = 'true';
+            }
+
             console.log('Requesting team matches with params:', params);
 
-            // Try the /api/matches path first
-            const response = await this.axiosInstance.get('/api/matches', { params });
+            // Try the /matches path first
+            const response = await this.axiosInstance.get('/matches', { params });
             
             return {
                 success: true,
@@ -233,6 +247,10 @@ class AwsMatchesApi {
                 
                 if (tournamentLevel) {
                     params.tournamentLevel = tournamentLevel;
+                }
+
+                if (includeWinProbability) {
+                    params.includeWinProbability = 'true';
                 }
 
                 const response = await this.axiosInstance.get('/matches', { params });
@@ -513,10 +531,13 @@ class AwsMatchesApi {
      */
     async batchCalculateTeamEPAs(teamNumbers, eventStartDate = null) {
         try {
-            const response = await this.axiosInstance.post('/api/epa/batch-historical-epa', {
-                teamNumbers: teamNumbers,
-                eventStartDate: eventStartDate
-            });
+            // For batch EPA, we'll call the EPA endpoint with team numbers as query parameters
+            const params = {
+                teamNumbers: teamNumbers.join(','),
+                ...(eventStartDate && { eventStartDate })
+            };
+            
+            const response = await this.axiosInstance.get('/epa', { params });
 
             return {
                 success: true,
@@ -568,10 +589,11 @@ class AwsMatchesApi {
      */
     async calculateTeamEPA(teamNumber, eventStartDate = null) {
         try {
-            const response = await this.axiosInstance.post('/api/epa/team-historical-epa', {
-                teamNumber: teamNumber,
-                eventStartDate: eventStartDate
-            });
+            const params = {
+                ...(eventStartDate && { eventStartDate })
+            };
+            
+            const response = await this.axiosInstance.get(`/epa/${teamNumber}`, { params });
 
             return {
                 success: true,
@@ -637,10 +659,12 @@ class AwsMatchesApi {
                 teamEpas = epaResult.teamEPAs;
             }
 
-            const response = await this.axiosInstance.post('/api/epa/match-prediction', {
-                redTeams: redTeams,
-                blueTeams: blueTeams,
-                teamEpas: teamEpas
+            const response = await this.axiosInstance.get('/epa/prediction', {
+                params: {
+                    redTeams: redTeams.join(','),
+                    blueTeams: blueTeams.join(','),
+                    teamEpas: JSON.stringify(teamEpas)
+                }
             });
 
             return {
@@ -837,8 +861,13 @@ class AwsMatchesApi {
      */
     formatMatchForDisplay(match) {
         if (!match) return null;
+        
+        console.log('=== formatMatchForDisplay START ===');
+        console.log('formatMatchForDisplay input:', match);
+        console.log('Input winProbability:', match.winProbability);
+        console.log('Type of winProbability:', typeof match.winProbability);
 
-        return {
+        const formatted = {
             id: match.matchId,
             number: match.matchNumber,
             description: match.description,
@@ -869,9 +898,28 @@ class AwsMatchesApi {
             completed: match.scoreRedFinal !== null && match.scoreBlueFinal !== null,
             winner: this.determineWinner(match),
             
+            // Win probability data - preserve exactly as received
+            winProbability: match.winProbability || null,
+            teamEPAs: match.teamEPAs || {},
+            
             // Metadata
             lastUpdated: match.lastUpdated
         };
+        
+        console.log('formatMatchForDisplay output:', formatted);
+        console.log('Output winProbability:', formatted.winProbability);
+        console.log('Type of output winProbability:', typeof formatted.winProbability);
+        if (formatted.winProbability) {
+            console.log('Win probability details:', {
+                red: formatted.winProbability.redWinProbability,
+                blue: formatted.winProbability.blueWinProbability,
+                redType: typeof formatted.winProbability.redWinProbability,
+                blueType: typeof formatted.winProbability.blueWinProbability
+            });
+        }
+        console.log('=== formatMatchForDisplay END ===');
+        
+        return formatted;
     }
 
     /**

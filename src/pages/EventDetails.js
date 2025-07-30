@@ -56,15 +56,17 @@ const EventDetails = () => {
             setTeams(eventData.teams || []);
             setTeamEPAs(eventData.epas || eventData.teamEPAs || {});
             
+            // Matches already contain winProbability data from the API
             const matchesArray = eventData.matches || [];
-            const predictionsArray = eventData.predictions || [];
+            console.log('EventDetails - Setting matches:', matchesArray);
             
-            const matchesWithPredictions = matchesArray.map(match => ({
-                ...match,
-                prediction: predictionsArray.find(p => p.matchNumber === match.matchNumber)?.prediction
-            }));
+            // Log a sample match to debug
+            if (matchesArray.length > 0) {
+                console.log('EventDetails - Sample match:', matchesArray[0]);
+                console.log('EventDetails - Sample winProbability:', matchesArray[0].winProbability);
+            }
             
-            setMatches(matchesWithPredictions);
+            setMatches(matchesArray);
         } catch (err) {
             const errorMessage = err.response?.data?.detail || err.message || 'Failed to fetch event details';
             setError(errorMessage);
@@ -230,19 +232,30 @@ const EventDetails = () => {
                 {sortedMatches.map((match) => {
                   const redWon = match.scoreRedFinal > match.scoreBlueFinal;
                   const blueWon = match.scoreBlueFinal > match.scoreRedFinal;
-                  const prediction = match.prediction || {};
-                  const winProb = prediction.predicted_winner === 'Red' ? 
-                    prediction.red_win_probability : prediction.blue_win_probability;
+                  
+                  // Check for win probability data in the new format
+                  const prediction = match.winProbability || match.prediction || {};
+                  
+                  // Handle both old and new property names
+                  const predictedWinner = prediction.predictedWinner || prediction.predicted_winner;
+                  const redWinProb = prediction.redWinProbability || prediction.red_win_probability;
+                  const blueWinProb = prediction.blueWinProbability || prediction.blue_win_probability;
+                  
+                  const winProb = predictedWinner === 'Red' ? redWinProb : blueWinProb;
+                  
+                  console.log('EventDetails match:', match);
+                  console.log('EventDetails prediction data:', { prediction, predictedWinner, redWinProb, blueWinProb, winProb });
+                  
                   // Determine predicted winner color
-                  const predictedWinnerBg = prediction.predicted_winner === 'Red'
+                  const predictedWinnerBg = predictedWinner === 'Red'
                     ? 'rgba(255, 0, 0, 0.08)'
-                    : prediction.predicted_winner === 'Blue'
+                    : predictedWinner === 'Blue'
                     ? 'rgba(0, 0, 255, 0.08)'
                     : undefined;
                   // Determine if prediction was correct
                   const actualWinner = redWon ? 'Red' : blueWon ? 'Blue' : 'Tie';
-                  const winProbColor = prediction.predicted_winner && actualWinner !== 'Tie'
-                    ? (prediction.predicted_winner === actualWinner ? 'success.main' : 'error.main')
+                  const winProbColor = predictedWinner && actualWinner !== 'Tie'
+                    ? (predictedWinner === actualWinner ? 'success.main' : 'error.main')
                     : undefined;
                   return (
                     <TableRow key={match.matchNumber}>
@@ -264,7 +277,7 @@ const EventDetails = () => {
                           : 'N/A'}
                       </TableCell>
                       <TableCell sx={predictedWinnerBg ? { backgroundColor: predictedWinnerBg } : {}}>
-                        {prediction.predicted_winner || 'N/A'}
+                        {predictedWinner || 'N/A'}
                       </TableCell>
                       <TableCell sx={winProbColor ? { color: winProbColor, fontWeight: 600 } : {}}>
                         {winProb ? `${(winProb * 100).toFixed(1)}%` : 'N/A'}

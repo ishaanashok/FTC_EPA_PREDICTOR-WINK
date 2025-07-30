@@ -10,6 +10,7 @@ from botocore.exceptions import ClientError
 
 # Local imports
 from services.dynamodb_service import DynamoDBService
+from services.win_probability_service import WinProbabilityService
 # Note: FTC API service requires additional dependencies not in current layer
 # from services.ftc_api_service import FTCApiService
 
@@ -21,11 +22,12 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 class MatchesApiService:
-    """Matches API service - reads directly from DynamoDB"""
+    """Matches API service - reads directly from DynamoDB with win probability calculations"""
     
-    def __init__(self, environment: str = 'dev'):
+    def __init__(self, environment: str = 'stage'):
         self.environment = environment
         self.db_service = DynamoDBService(environment)
+        self.win_prob_service = WinProbabilityService(environment)
         # self.ftc_api_service = FTCApiService()  # Disabled due to missing dependencies
     
     def transform_match_scores(self, match: Dict[str, Any]) -> Dict[str, Any]:
@@ -111,8 +113,9 @@ class MatchesApiService:
     async def get_matches(self, season: int, event_code: Optional[str] = None,
                          team_number: Optional[int] = None, 
                          tournament_level: Optional[str] = None,
+                         include_win_probability: bool = True,
                          limit: int = 100) -> Dict[str, Any]:
-        """Get matches data from DynamoDB"""
+        """Get matches data from DynamoDB with optional win probability calculations"""
         try:
             if event_code:
                 # Get matches for specific event
@@ -126,12 +129,18 @@ class MatchesApiService:
                 # Enrich with team assignment data
                 enriched_matches = await self.enrich_matches_with_teams(transformed_matches, season, event_code)
                 
+                # Add win probability data if requested
+                if include_win_probability and enriched_matches:
+                    logger.info(f"Adding win probability data to {len(enriched_matches)} event matches")
+                    enriched_matches = await self.win_prob_service.add_win_probability_to_matches(enriched_matches)
+                
                 return {
                     "success": True,
                     "matches": enriched_matches,
                     "total": len(enriched_matches),
                     "eventCode": event_code,
-                    "tournamentLevel": tournament_level
+                    "tournamentLevel": tournament_level,
+                    "includesWinProbability": include_win_probability
                 }
             
             elif team_number:
@@ -145,12 +154,18 @@ class MatchesApiService:
                 # Transform score structures
                 transformed_matches = [self.transform_match_scores(match) for match in matches]
                 
+                # Add win probability data if requested
+                if include_win_probability and transformed_matches:
+                    logger.info(f"Adding win probability data to {len(transformed_matches)} team matches")
+                    transformed_matches = await self.win_prob_service.add_win_probability_to_matches(transformed_matches)
+                
                 return {
                     "success": True,
                     "matches": transformed_matches,
                     "total": len(transformed_matches),
                     "teamNumber": team_number,
-                    "tournamentLevel": tournament_level
+                    "tournamentLevel": tournament_level,
+                    "includesWinProbability": include_win_probability
                 }
             
             else:
@@ -170,8 +185,8 @@ class MatchesApiService:
                 "total": 0
             }
     
-    async def get_match_details(self, match_id: str) -> Dict[str, Any]:
-        """Get detailed information about a specific match"""
+    async def get_match_details(self, match_id: str, include_win_probability: bool = True) -> Dict[str, Any]:
+        """Get detailed information about a specific match with win probability"""
         try:
             # Get match basic info
             match = await self.db_service.get_match(match_id)
@@ -186,17 +201,14 @@ class MatchesApiService:
             # Transform score structure
             transformed_match = self.transform_match_scores(match)
             
-            # Get EPA data for teams in this match if available
-            team_epas = {}
-            all_teams = match.get('allTeams', [])
-            
-            if all_teams:
-                team_epas = await self.db_service.batch_get_team_epas(all_teams)
+            # Add win probability data if requested
+            if include_win_probability:
+                transformed_match = await self.win_prob_service.add_win_probability_to_match(transformed_match)
             
             return {
                 "success": True,
                 "match": transformed_match,
-                "teamEPAs": team_epas
+                "includesWinProbability": include_win_probability
             }
             
         except Exception as e:
@@ -205,6 +217,26 @@ class MatchesApiService:
                 "success": False,
                 "error": str(e),
                 "match": None
+            }
+    
+    async def calculate_match_prediction(self, red_teams: List[int], blue_teams: List[int]) -> Dict[str, Any]:
+        """Calculate win probability for a hypothetical match"""
+        try:
+            prediction = await self.win_prob_service.calculate_single_match_prediction(red_teams, blue_teams)
+            
+            return {
+                "success": True,
+                "prediction": prediction,
+                "redTeams": red_teams,
+                "blueTeams": blue_teams
+            }
+            
+        except Exception as e:
+            logger.error(f"Error calculating match prediction: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e),
+                "prediction": None
             }
     
     async def get_match_predictions(self, match_id: str) -> Dict[str, Any]:
@@ -287,7 +319,10 @@ async def lambda_handler(event, context):
                 if 'predictions' in event.get('path', ''):
                     result = await api_service.get_match_predictions(match_id)
                 else:
-                    result = await api_service.get_match_details(match_id)
+                    # Check if win probability should be included (default True)
+                    include_win_prob_str = query_parameters.get('includeWinProbability', 'true')
+                    include_win_probability = include_win_prob_str.lower() in ['true', '1', 'yes']
+                    result = await api_service.get_match_details(match_id, include_win_probability)
             else:
                 # Get matches with filters
                 # Check path parameters first, then query parameters
@@ -301,13 +336,67 @@ async def lambda_handler(event, context):
                 tournament_level = query_parameters.get('tournamentLevel')
                 limit = int(query_parameters.get('limit', 100))
                 
+                # Check if win probability should be included (default True)
+                include_win_prob_str = query_parameters.get('includeWinProbability', 'true')
+                include_win_probability = include_win_prob_str.lower() in ['true', '1', 'yes']
+                
                 result = await api_service.get_matches(
                     season=season,
                     event_code=event_code,
                     team_number=team_number,
                     tournament_level=tournament_level,
+                    include_win_probability=include_win_probability,
                     limit=limit
                 )
+        elif http_method == 'POST':
+            # Handle POST requests for match predictions
+            body = event.get('body', '{}')
+            if isinstance(body, str):
+                try:
+                    request_data = json.loads(body)
+                except json.JSONDecodeError:
+                    return {
+                        'statusCode': 400,
+                        'headers': {
+                            'Content-Type': 'application/json',
+                            'Access-Control-Allow-Origin': '*'
+                        },
+                        'body': json.dumps({
+                            'error': 'Invalid JSON in request body'
+                        })
+                    }
+            else:
+                request_data = body
+            
+            # Check if this is a match prediction request
+            if 'redTeams' in request_data and 'blueTeams' in request_data:
+                red_teams = request_data['redTeams']
+                blue_teams = request_data['blueTeams']
+                
+                if not isinstance(red_teams, list) or not isinstance(blue_teams, list):
+                    return {
+                        'statusCode': 400,
+                        'headers': {
+                            'Content-Type': 'application/json',
+                            'Access-Control-Allow-Origin': '*'
+                        },
+                        'body': json.dumps({
+                            'error': 'redTeams and blueTeams must be arrays'
+                        })
+                    }
+                
+                result = await api_service.calculate_match_prediction(red_teams, blue_teams)
+            else:
+                return {
+                    'statusCode': 400,
+                    'headers': {
+                        'Content-Type': 'application/json',
+                        'Access-Control-Allow-Origin': '*'
+                    },
+                    'body': json.dumps({
+                        'error': 'POST requests must include redTeams and blueTeams arrays'
+                    })
+                }
         else:
             return {
                 'statusCode': 405,
@@ -317,7 +406,7 @@ async def lambda_handler(event, context):
                 },
                 'body': json.dumps({
                     'error': 'Method not allowed',
-                    'allowedMethods': ['GET']
+                    'allowedMethods': ['GET', 'POST']
                 })
             }
         

@@ -8,6 +8,7 @@ import Navbar from './components/Navbar';
 import TeamDetails from './pages/teamDetails';  // Fixed to match actual filename
 import AdminLogin from './pages/AdminLogin';
 import AdminDashboard from './pages/AdminDashboard';
+import TestAwsApi from './pages/TestAwsApi';
 import ProtectedRoute from './components/ProtectedRoute';
 import { ThemeProvider } from '@mui/material';
 import { theme } from './theme/theme';
@@ -28,6 +29,7 @@ function App() {
             <Route path="/events/:season/:eventCode" element={<EventDetails />} />
             <Route path="/team/:teamNumber" element={<TeamDetails />} />
             <Route path="/admin" element={<AdminLogin />} />
+            <Route path="/test-aws-api" element={<TestAwsApi />} />
             <Route 
               path="/admin/dashboard" 
               element={

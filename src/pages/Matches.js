@@ -37,18 +37,29 @@ function Matches() {
   const [teamEPAs, setTeamEPAs] = useState({});
   const [epaLoading, setEpaLoading] = useState(false);
   const [showEPAData, setShowEPAData] = useState(true);
+  const [showWinProbability, setShowWinProbability] = useState(true);
+  const [winProbabilityLoading, setWinProbabilityLoading] = useState(false);
 
-  useEffect(() => {
-    fetchEvents();
-  }, [selectedSeason]);
-
-  useEffect(() => {
-    if (selectedEvent) {
-      fetchEPAData();
-      fetchMatches();
-      fetchMatchStats();
+  const fetchEvents = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const data = await api.searchEvents(selectedSeason);
+      const eventsArray = Array.isArray(data) ? data : [];
+      setEvents(eventsArray);
+      if (eventsArray.length > 0) {
+        // Look for the first event that has matches, otherwise use the first one
+        const eventWithMatches = eventsArray.find(event => event.matchCount && event.matchCount > 0);
+        setSelectedEvent(eventWithMatches ? eventWithMatches.code : eventsArray[0].code);
+      }
+    } catch (err) {
+      setError('Failed to fetch events. Please try again later.');
+      setEvents([]); // Ensure events is always an array
+      console.error('Error fetching events:', err);
+    } finally {
+      setLoading(false);
     }
-  }, [selectedEvent, tournamentLevel]);
+  };
 
   const fetchEPAData = async () => {
     if (!selectedEvent) return;
@@ -72,42 +83,26 @@ function Matches() {
     }
   };
 
-  const fetchEvents = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const data = await api.searchEvents(selectedSeason);
-      const eventsArray = Array.isArray(data) ? data : [];
-      setEvents(eventsArray);
-      if (eventsArray.length > 0) {
-        setSelectedEvent(eventsArray[0].code);
-      }
-    } catch (err) {
-      setError('Failed to fetch events. Please try again later.');
-      setEvents([]); // Ensure events is always an array
-      console.error('Error fetching events:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const fetchMatches = async () => {
     if (!selectedEvent) return;
 
     try {
       setLoading(true);
+      setWinProbabilityLoading(true);
       setError(null);
       
       console.log('Fetching matches for:', {
         season: selectedSeason,
         eventCode: selectedEvent,
-        tournamentLevel: tournamentLevel || 'all'
+        tournamentLevel: tournamentLevel || 'all',
+        includeWinProbability: showWinProbability
       });
       
       const data = await api.getEventMatches(
         selectedSeason, 
         selectedEvent, 
-        tournamentLevel || null
+        tournamentLevel || null,
+        showWinProbability
       );
       
       console.log('Received matches data:', data);
@@ -116,7 +111,10 @@ function Matches() {
       const matchesArray = data?.matches || [];
       
       // Format matches for display
-      const formattedMatches = matchesArray.map(match => api.formatMatchForDisplay(match));
+      const formattedMatches = matchesArray.map((match, index) => {
+        const formatted = api.formatMatchForDisplay(match);
+        return formatted;
+      });
       setMatches(formattedMatches);
       
       // Show info if using mock data
@@ -144,6 +142,7 @@ function Matches() {
       }
     } finally {
       setLoading(false);
+      setWinProbabilityLoading(false);
     }
   };
 
@@ -158,6 +157,18 @@ function Matches() {
       setMatchStats(null);
     }
   };
+
+  useEffect(() => {
+    fetchEvents();
+  }, [selectedSeason]);
+
+  useEffect(() => {
+    if (selectedEvent) {
+      fetchEPAData();
+      fetchMatches();
+      fetchMatchStats();
+    }
+  }, [selectedEvent, tournamentLevel, selectedSeason, showWinProbability]);
 
   const handleEventChange = (event) => {
     setSelectedEvent(event.target.value);
@@ -218,6 +229,79 @@ function Matches() {
         }
         size="small"
       />
+    );
+  };
+
+  const getWinProbabilityDisplay = (match) => {
+    console.log('getWinProbabilityDisplay called with match:', match);
+    console.log('match.winProbability:', match.winProbability);
+    
+    // Check if match has win probability data from the API
+    if (match.winProbability && match.winProbability.redWinProbability !== undefined && match.winProbability.blueWinProbability !== undefined) {
+      console.log('Found winProbability data from API!');
+      const { redWinProbability, blueWinProbability, predictedWinner, confidenceLevel } = match.winProbability;
+      
+      console.log('Extracted values:', { redWinProbability, blueWinProbability, predictedWinner, confidenceLevel });
+      console.log('Red percentage:', (redWinProbability * 100).toFixed(1));
+      console.log('Blue percentage:', (blueWinProbability * 100).toFixed(1));
+      
+      // Ensure we have valid numbers
+      const redPercentage = typeof redWinProbability === 'number' ? (redWinProbability * 100).toFixed(1) : 'N/A';
+      const bluePercentage = typeof blueWinProbability === 'number' ? (blueWinProbability * 100).toFixed(1) : 'N/A';
+      
+      return (
+        <Box>
+          <Typography variant="body2" sx={{ fontWeight: 'bold', color: 'error.main' }}>
+            Red: {redPercentage}%
+          </Typography>
+          <Typography variant="body2" sx={{ fontWeight: 'bold', color: 'primary.main' }}>
+            Blue: {bluePercentage}%
+          </Typography>
+          <Typography variant="caption" color="text.secondary" display="block">
+            Predicted: {predictedWinner || 'Unknown'}
+          </Typography>
+          {confidenceLevel && typeof confidenceLevel === 'number' && (
+            <Typography variant="caption" color="text.secondary" display="block">
+              Confidence: {(confidenceLevel * 100).toFixed(0)}%
+            </Typography>
+          )}
+        </Box>
+      );
+    }
+    
+    console.log('No winProbability found, trying fallback...');
+    
+    // Fallback to local EPA calculation if no API data
+    const prediction = getMatchPrediction(match);
+    if (prediction) {
+      console.log('Found prediction from getMatchPrediction!');
+      const { redWinProbability, blueWinProbability } = prediction;
+      const predictedWinner = redWinProbability > 0.5 ? 'Red' : 'Blue';
+      
+      return (
+        <Box>
+          <Typography variant="body2" sx={{ fontWeight: 'bold', color: 'error.main' }}>
+            Red: {(redWinProbability * 100).toFixed(1)}%
+          </Typography>
+          <Typography variant="body2" sx={{ fontWeight: 'bold', color: 'primary.main' }}>
+            Blue: {(blueWinProbability * 100).toFixed(1)}%
+          </Typography>
+          <Typography variant="caption" color="text.secondary" display="block">
+            Predicted: {predictedWinner}
+          </Typography>
+          <Typography variant="caption" color="text.secondary" display="block">
+            Local EPA calculation
+          </Typography>
+        </Box>
+      );
+    }
+    
+    console.log('No prediction data available, returning No EPA data');
+    
+    return (
+      <Typography variant="caption" color="text.secondary">
+        No EPA data
+      </Typography>
     );
   };
 
@@ -369,6 +453,26 @@ function Matches() {
           </Grid>
         )}
 
+        {/* Win Probability Toggle */}
+        <Grid item xs={12}>
+          <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+            <Button
+              variant={showWinProbability ? 'contained' : 'outlined'}
+              onClick={() => setShowWinProbability(!showWinProbability)}
+              size="small"
+              disabled={winProbabilityLoading}
+            >
+              {showWinProbability ? 'Hide Win Probabilities' : 'Show Win Probabilities'}
+            </Button>
+            {winProbabilityLoading && <CircularProgress size={20} />}
+            {showWinProbability && (
+              <Typography variant="caption" color="text.secondary">
+                Win probabilities calculated using EPA values from FTC_EPA_stage table
+              </Typography>
+            )}
+          </Box>
+        </Grid>
+
         {/* Match Statistics */}
         {matchStats && (
           <Grid item xs={12}>
@@ -457,6 +561,7 @@ function Matches() {
                     <TableCell>Description</TableCell>
                     <TableCell>Red Alliance</TableCell>
                     <TableCell>Blue Alliance</TableCell>
+                    {showWinProbability && <TableCell>Win Probability</TableCell>}
                     <TableCell>Score</TableCell>
                     <TableCell>Winner</TableCell>
                     <TableCell>Start Time</TableCell>
@@ -482,14 +587,25 @@ function Matches() {
                       </TableCell>
                       <TableCell>
                         <Box sx={{ color: 'error.main' }}>
-                          {match.redTeams?.join(', ') || 'TBD'}
+                          {showEPAData 
+                            ? match.redTeams?.map(team => `${team}${getTeamEPADisplay(team)}`).join(', ') || 'TBD'
+                            : match.redTeams?.join(', ') || 'TBD'
+                          }
                         </Box>
                       </TableCell>
                       <TableCell>
                         <Box sx={{ color: 'primary.main' }}>
-                          {match.blueTeams?.join(', ') || 'TBD'}
+                          {showEPAData 
+                            ? match.blueTeams?.map(team => `${team}${getTeamEPADisplay(team)}`).join(', ') || 'TBD'
+                            : match.blueTeams?.join(', ') || 'TBD'
+                          }
                         </Box>
                       </TableCell>
+                      {showWinProbability && (
+                        <TableCell>
+                          {getWinProbabilityDisplay(match)}
+                        </TableCell>
+                      )}
                       <TableCell>
                         <Typography variant="body2">
                           {getScoreDisplay(match)}

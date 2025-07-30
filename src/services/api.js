@@ -2,35 +2,43 @@ import axios from 'axios';
 import { config } from '../config';
 import AwsMatchesApi from './awsMatchesApi.js';
 
-// Use AWS API Gateway for matches, localhost backend for other data
-const BASE_URL = 'http://localhost:8000/api';
-const AUTH_TOKEN = btoa(`${config.ftcApi.username}:${config.ftcApi.key}`);
+// Use AWS API Gateway for all data - no more localhost backend
+const AWS_BASE_URL = config.apiBaseUrl;
 
-const axiosInstance = axios.create({
-    baseURL: BASE_URL,
+const awsAxiosInstance = axios.create({
+    baseURL: AWS_BASE_URL,
     headers: {
-        'Authorization': `Basic ${AUTH_TOKEN}`,
         'Content-Type': 'application/json'
     }
 });
 
-// Initialize AWS Matches API service
+// Initialize AWS services
 const awsMatchesApi = new AwsMatchesApi();
 
 const api = {
-    // Teams API
+    // Teams API - now using AWS Lambda
     getTeam: async (number, season = config.currentSeason) => {
-        const response = await axiosInstance.get(`/teams/${season}`, {
-            params: { teamNumber: number }
-        });
-        return response.data;
+        try {
+            const response = await awsAxiosInstance.get('/teams', {
+                params: { teamNumber: number, season: season }
+            });
+            return response.data;
+        } catch (error) {
+            console.error('Error fetching team from AWS:', error);
+            throw error;
+        }
     },
 
     getTeamEvents: async (number, season = config.currentSeason) => {
-        const response = await axiosInstance.get(`/events/${season}`, {
-            params: { teamNumber: number }
-        });
-        return response.data;
+        try {
+            const response = await awsAxiosInstance.get('/events', {
+                params: { teamNumber: number, season: season }
+            });
+            return response.data;
+        } catch (error) {
+            console.error('Error fetching team events from AWS:', error);
+            throw error;
+        }
     },
 
     // Updated to use AWS matches API
@@ -59,24 +67,36 @@ const api = {
             };
         } catch (error) {
             console.error('Error fetching team matches from AWS:', error);
-            // Fallback to localhost backend if AWS fails
-            console.log('Falling back to localhost backend for team matches');
-            const response = await axiosInstance.get(`/schedule/${season}/${eventCode}/${config.defaultTournamentLevel}`, {
-                params: {
-                    teamNumber: number
-                }
-            });
-            return response.data;
+            // Return empty result instead of trying localhost fallback
+            return {
+                matches: [],
+                total: 0,
+                teamNumber: number,
+                season: season,
+                eventCode: eventCode,
+                tournamentLevel: tournamentLevel,
+                lastUpdated: new Date().toISOString(),
+                error: error.message
+            };
         }
     },
 
     // New method for getting event matches using AWS
-    getEventMatches: async (season = config.currentSeason, eventCode, tournamentLevel = null) => {
+    getEventMatches: async (season = config.currentSeason, eventCode, tournamentLevel = null, includeWinProbability = false) => {
         try {
-            const result = await awsMatchesApi.getEventMatches(season, eventCode, tournamentLevel);
+            console.log('API: getEventMatches called with:', { season, eventCode, tournamentLevel, includeWinProbability });
+            
+            const result = await awsMatchesApi.getEventMatches(season, eventCode, tournamentLevel, includeWinProbability);
+            
+            console.log('API: awsMatchesApi.getEventMatches result:', result);
             
             if (!result.success) {
                 throw new Error(result.error);
+            }
+
+            console.log('API: result.matches length:', result.matches?.length || 0);
+            if (result.matches && result.matches.length > 0) {
+                console.log('API: First match winProbability:', result.matches[0].winProbability);
             }
 
             return {
@@ -85,7 +105,7 @@ const api = {
                 eventCode: result.eventCode,
                 season: season,
                 tournamentLevel: result.tournamentLevel,
-                lastUpdated: result.metadata.lastUpdated
+                lastUpdated: result.metadata?.lastUpdated
             };
         } catch (error) {
             console.error('Error fetching event matches from AWS:', error);
@@ -248,50 +268,91 @@ const api = {
     // Legacy EPA endpoints (for backward compatibility)
 
     searchTeams: async (season = config.currentSeason, state = '', search = '') => {
-        const params = {};
-        if (state) params.state = state;
-        if (search) {
-            const isNumber = !isNaN(search) && !isNaN(parseFloat(search));
-            if (isNumber) {
-                params.teamNumber = parseInt(search);
-            } else {
-                params.search = search;
+        try {
+            const params = { season };
+            if (state) params.state = state;
+            if (search) {
+                const isNumber = !isNaN(search) && !isNaN(parseFloat(search));
+                if (isNumber) {
+                    params.teamNumber = parseInt(search);
+                } else {
+                    params.search = search;
+                }
             }
+            
+            const response = await awsAxiosInstance.get('/teams', { params });
+            return response.data;
+        } catch (error) {
+            console.error('Error searching teams from AWS:', error);
+            throw error;
         }
-        
-        const response = await axiosInstance.get(`/teams/${season}`, { params });
-        return response.data;
     },
 
     searchEvents: async (params = { season: config.currentSeason }) => {
-        // If params is just a number, treat it as the season
-        const season = typeof params === 'number' ? params : (params.season || config.currentSeason);
-        const response = await axiosInstance.get(`/events/${season}`, { params: typeof params === 'object' ? params : {} });
-        // Ensure we always return an array for filtering
-        if (response.data && Array.isArray(response.data)) {
-            return response.data;
-        } else if (response.data && response.data.events && Array.isArray(response.data.events)) {
-            return response.data.events;
-        } else {
-            console.warn('Events data is not in expected format:', response.data);
+        try {
+            // If params is just a number, treat it as the season
+            const season = typeof params === 'number' ? params : (params.season || config.currentSeason);
+            const queryParams = { season };
+            
+            // Add other filters if they exist
+            if (typeof params === 'object') {
+                if (params.eventCode) queryParams.eventCode = params.eventCode;
+                if (params.teamNumber) queryParams.teamNumber = params.teamNumber;
+                if (params.limit) queryParams.limit = params.limit;
+            }
+            
+            const response = await awsAxiosInstance.get('/events', { params: queryParams });
+            const data = response.data;
+            
+            // Ensure we always return an array for filtering
+            if (data && data.success && Array.isArray(data.events)) {
+                return data.events;
+            } else if (data && Array.isArray(data)) {
+                return data;
+            } else {
+                console.warn('Events data is not in expected format:', data);
+                return [];
+            }
+        } catch (error) {
+            console.error('Error searching events from AWS:', error);
+            // Return empty array instead of throwing to prevent UI crashes
             return [];
         }
     },
 
     getEvent: async (season = config.currentSeason, eventCode) => {
-        const response = await axiosInstance.get(`/events/${season}/${eventCode}`);
-        return response.data;
+        try {
+            const response = await awsAxiosInstance.get('/events', {
+                params: { season, eventCode }
+            });
+            const data = response.data;
+            
+            if (data && data.success && data.events && data.events.length > 0) {
+                return data.events[0];
+            } else {
+                throw new Error(`Event ${eventCode} not found for season ${season}`);
+            }
+        } catch (error) {
+            console.error('Error fetching event from AWS:', error);
+            throw error;
+        }
     },
 
     getEventDetails: async (season = config.currentSeason, eventCode) => {
-        const [eventData, rankings] = await Promise.all([
-            axiosInstance.get(`/events/${season}/${eventCode}`),
-            axiosInstance.get(`/rankings/${season}/${eventCode}`)
-        ]);
-        return {
-            ...eventData.data,
-            rankings: rankings.data
-        };
+        try {
+            const [eventData, rankings] = await Promise.all([
+                awsAxiosInstance.get('/events', { params: { season, eventCode } }),
+                // Note: Rankings might need a separate endpoint or be included in event data
+                awsAxiosInstance.get('/events', { params: { season, eventCode } })
+            ]);
+            return {
+                ...eventData.data,
+                rankings: rankings.data
+            };
+        } catch (error) {
+            console.error('Error fetching event details from AWS:', error);
+            throw error;
+        }
     }
 };
 

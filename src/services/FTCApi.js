@@ -212,12 +212,22 @@ class FTCApi {
         return this.request(`/schedule/${season}/${eventCode}`, params);
     }
 
-    async getEventMatches(season, eventCode, tournamentLevel = 'qual', teamNumber = null) {
-        const params = {
-            tournamentLevel,
-            teamNumber
-        };
-        return this.request(`/matches/${season}/${eventCode}`, params);
+    async getEventMatches(season, eventCode, tournamentLevel = null, includeWinProbability = false) {
+        try {
+            const params = { season, eventCode };
+            if (tournamentLevel && tournamentLevel !== 'all') {
+                params.tournamentLevel = tournamentLevel;
+            }
+            if (includeWinProbability) {
+                params.includeWinProbability = 'true';
+            }
+            
+            const response = await this.axiosInstance.get('/api/matches', { params });
+            return response.data;
+        } catch (error) {
+            console.error('Error fetching event matches:', error);
+            throw error;
+        }
     }
 
     async getTeamSeasonMatches(season, teamNumber) {
@@ -359,7 +369,7 @@ class FTCApi {
         let matches = [];
         try {
             const matchesResponse = await this.axiosInstance.get(`/api/matches`, {
-                params: { season, eventCode }
+                params: { season, eventCode, includeWinProbability: 'true' }
             });
             matches = matchesResponse.data?.matches || [];
             console.log('Matches fetched:', matches.length, 'matches');
@@ -387,14 +397,19 @@ class FTCApi {
         
         console.log('Final result - Teams:', teams.length, 'Matches:', matches.length, 'EPAs:', Object.keys(teamEPAs).length);
         
+        // Log a sample match to see the win probability data
+        if (matches.length > 0) {
+            console.log('Sample match with win probability:', matches[0]);
+        }
+        
         return {
             success: true,
             eventDetails: eventDetails,
             eventCode,
             season,
             teams: teams,
-            matches: matches,
-            predictions: [], // Predictions would need a separate endpoint
+            matches: matches, // These matches already contain winProbability data
+            predictions: [], // Legacy predictions not needed since winProbability is in matches
             teamEPAs: teamEPAs,
             teamCount: teams.length,
             lastUpdated: new Date().toISOString(),
