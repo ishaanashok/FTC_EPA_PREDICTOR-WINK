@@ -27,30 +27,18 @@ import {
   Tooltip
 } from '@mui/material';
 import Confetti from 'react-confetti';
-import FTCApi from '../services/FTCApi';
+import FTCApi from '../services/ftcapi';
 
 // Add method to FTCApi to handle batch processing
 FTCApi.prototype.getBestAlliancePartnersBatch = async function(season, eventCode, teamNumbers, teamEPAs = {}) {
   try {
-    const response = await fetch(`${this.apiBaseUrl}/api/alliance-matchmaker/batch`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        season,
-        eventCode,
-        teamNumbers,
-        teamEPAs
-      }),
+    const response = await this.axiosInstance.post('/api/alliance-matchmaker/batch', {
+      season,
+      eventCode,
+      teamNumbers,
+      teamEPAs
     });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`API Error: ${response.status} - ${errorText}`);
-    }
-
-    return await response.json();
+    return response.data;
   } catch (error) {
     console.error('Error in batch alliance matchmaker request:', error);
     throw error;
@@ -172,16 +160,22 @@ const AllianceMatchmaker = ({ season, eventCode, teams, teamEPAs }) => {
   
   // Helper to get the highest-EPA alliance (excluding your team and partner)
   const getHighestEPAAlliance = useCallback(() => {
+    if (!result?.partners) return [];
+    
     // Get all team numbers except your team and selected partner
-    const exclude = [parseInt(teamNumber), selectedPartner?.teamNumber2];
-    const eligible = Object.keys(teamEPAs)
-      .map(Number)
-      .filter(tn => !exclude.includes(tn));
-    // Sort by EPA descending
-    eligible.sort((a, b) => (teamEPAs[b] || 0) - (teamEPAs[a] || 0));
-    // Pick top 2 (assuming alliances of 2)
-    return eligible.slice(0, 2);
-  }, [teamNumber, selectedPartner, teamEPAs]);
+    const exclude = [parseInt(teamNumber), selectedPartner?.teamNumber];
+    
+    // Get EPA data from the alliance matchmaker result
+    const eligibleTeams = result.partners
+      .filter(partner => !exclude.includes(partner.teamNumber))
+      .sort((a, b) => (b.epa || 0) - (a.epa || 0));
+    
+    // Pick top 2 teams (assuming alliances of 2)
+    return eligibleTeams.slice(0, 2).map(team => ({
+      teamNumber: team.teamNumber,
+      epa: team.epa || 0
+    }));
+  }, [teamNumber, selectedPartner, result]);
 
   // Handler for clicking a partner card
   const handlePartnerClick = async (match) => {
@@ -190,35 +184,31 @@ const AllianceMatchmaker = ({ season, eventCode, teams, teamEPAs }) => {
     setWinProbError(null);
     setWinProbLoading(true);
     try {
-      const yourAlliance = [parseInt(teamNumber), match.teamNumber2];
-      const oppAlliance = getHighestEPAAlliance();
-      // Calculate win probability for these alliances using the formula
-      const yourEPA = yourAlliance.reduce((sum, tn) => sum + (teamEPAs[tn] || 0), 0);
-      const oppEPA = oppAlliance.reduce((sum, tn) => sum + (teamEPAs[tn] || 0), 0);
-      const epaDiff = yourEPA - oppEPA;
+      const yourAlliance = [parseInt(teamNumber), match.teamNumber];
+      const oppAllianceTeams = getHighestEPAAlliance();
+      
+      // Calculate win probability using EPA data
+      const yourTeamEPA = result?.teamEPA || 0;
+      const partnerEPA = match.epa || 0;
+      const yourAllianceEPA = yourTeamEPA + partnerEPA;
+      
+      const oppEPA = oppAllianceTeams.reduce((sum, team) => sum + (team.epa || 0), 0);
+      const oppAlliance = oppAllianceTeams.map(team => team.teamNumber);
+      
+      const epaDiff = yourAllianceEPA - oppEPA;
       const winProb = 1 / (1 + Math.pow(10, -epaDiff / 400));
-      // Also, get the backend prediction for the actual match (if available)
-      let matchPrediction = null;
-      try {
-        matchPrediction = await ftcApi.getPrediction(
-          season,
-          eventCode,
-          yourAlliance,
-          oppAlliance,
-          teamEPAs,
-          null // matchNumber not needed
-        );
-      } catch (e) {
-        // Ignore backend error, just show frontend calc
-      }
+      
       setWinProbResult({
         yourAlliance,
         oppAlliance,
         winProb,
-        matchPrediction
+        yourAllianceEPA,
+        oppEPA,
+        matchPrediction: null // No backend prediction needed
       });
     } catch (err) {
-      setWinProbError('Failed to get win probability');
+      setWinProbError('Failed to calculate win probability');
+      console.error('Win probability calculation error:', err);
     } finally {
       setWinProbLoading(false);
     }
@@ -232,16 +222,16 @@ const AllianceMatchmaker = ({ season, eventCode, teams, teamEPAs }) => {
   };
 
   const CompatibilityCard = ({ match, index }) => {
-    const team = teams.find(t => t.teamNumber === match.teamNumber2);
-    const teamName = team ? (team.nameShort || team.nameFull || `Team ${match.teamNumber2}`) : `Team ${match.teamNumber2}`;
-    const teamEPA = teamEPAs[match.teamNumber2] || 0;
+    const team = teams.find(t => t.teamNumber === match.teamNumber);
+    const teamName = match.teamName || team?.nameShort || team?.nameFull || `Team ${match.teamNumber}`;
+    const teamEPA = match.epa || 0;
     
     return (
       <Card elevation={3} sx={{ mb: 2, border: index === 0 ? '2px solid #4caf50' : 'none', cursor: 'pointer' }}
         onClick={() => handlePartnerClick(match)}
       >
         <CardHeader
-          title={`#${match.teamNumber2} - ${teamName}`}
+          title={`#${match.teamNumber} - ${teamName}`}
           subheader={`Compatibility Score: ${(match.compatibilityScore * 100).toFixed(1)}%`}
           sx={{
             backgroundColor: index === 0 ? '#e8f5e9' : 'inherit',
@@ -253,6 +243,9 @@ const AllianceMatchmaker = ({ season, eventCode, teams, teamEPAs }) => {
             <Typography variant="subtitle1" gutterBottom>
               Combined EPA: {match.combinedEPA.toFixed(1)}
             </Typography>
+            <Typography variant="body2" color="textSecondary" gutterBottom>
+              Partner EPA: {match.epa.toFixed(1)} | Total Matches: {match.totalMatches}
+            </Typography>
           </Box>
           
           <Grid container spacing={2}>
@@ -262,27 +255,27 @@ const AllianceMatchmaker = ({ season, eventCode, teams, teamEPAs }) => {
                 <Typography variant="body2">Auto:</Typography>
                 <Typography 
                   variant="body2" 
-                  sx={{ fontWeight: 'bold', color: getColorForScore(match.team1Stats.auto) }}
+                  sx={{ fontWeight: 'bold', color: getColorForScore(result?.teamBreakdown?.avgAutoPoints || 0) }}
                 >
-                  {match.team1Stats.auto.toFixed(1)} ({formatScoreCategory(match.team1Stats.auto)})
+                  {(result?.teamBreakdown?.avgAutoPoints || 0).toFixed(1)} ({formatScoreCategory(result?.teamBreakdown?.avgAutoPoints || 0)})
                 </Typography>
               </Box>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
                 <Typography variant="body2">Teleop:</Typography>
                 <Typography 
                   variant="body2" 
-                  sx={{ fontWeight: 'bold', color: getColorForScore(match.team1Stats.teleop) }}
+                  sx={{ fontWeight: 'bold', color: getColorForScore(result?.teamBreakdown?.avgTeleopPoints || 0) }}
                 >
-                  {match.team1Stats.teleop.toFixed(1)} ({formatScoreCategory(match.team1Stats.teleop)})
+                  {(result?.teamBreakdown?.avgTeleopPoints || 0).toFixed(1)} ({formatScoreCategory(result?.teamBreakdown?.avgTeleopPoints || 0)})
                 </Typography>
               </Box>
               <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                 <Typography variant="body2">Endgame:</Typography>
                 <Typography 
                   variant="body2" 
-                  sx={{ fontWeight: 'bold', color: getColorForScore(match.team1Stats.endgame) }}
+                  sx={{ fontWeight: 'bold', color: getColorForScore(result?.teamBreakdown?.avgEndgamePoints || 0) }}
                 >
-                  {match.team1Stats.endgame.toFixed(1)} ({formatScoreCategory(match.team1Stats.endgame)})
+                  {(result?.teamBreakdown?.avgEndgamePoints || 0).toFixed(1)} ({formatScoreCategory(result?.teamBreakdown?.avgEndgamePoints || 0)})
                 </Typography>
               </Box>
             </Grid>
@@ -292,27 +285,27 @@ const AllianceMatchmaker = ({ season, eventCode, teams, teamEPAs }) => {
                 <Typography variant="body2">Auto:</Typography>
                 <Typography 
                   variant="body2" 
-                  sx={{ fontWeight: 'bold', color: getColorForScore(match.team2Stats.auto) }}
+                  sx={{ fontWeight: 'bold', color: getColorForScore(match.breakdown?.auto || 0) }}
                 >
-                  {match.team2Stats.auto.toFixed(1)} ({formatScoreCategory(match.team2Stats.auto)})
+                  {(match.breakdown?.auto || 0).toFixed(1)} ({formatScoreCategory(match.breakdown?.auto || 0)})
                 </Typography>
               </Box>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
                 <Typography variant="body2">Teleop:</Typography>
                 <Typography 
                   variant="body2" 
-                  sx={{ fontWeight: 'bold', color: getColorForScore(match.team2Stats.teleop) }}
+                  sx={{ fontWeight: 'bold', color: getColorForScore(match.breakdown?.teleop || 0) }}
                 >
-                  {match.team2Stats.teleop.toFixed(1)} ({formatScoreCategory(match.team2Stats.teleop)})
+                  {(match.breakdown?.teleop || 0).toFixed(1)} ({formatScoreCategory(match.breakdown?.teleop || 0)})
                 </Typography>
               </Box>
               <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                 <Typography variant="body2">Endgame:</Typography>
                 <Typography 
                   variant="body2" 
-                  sx={{ fontWeight: 'bold', color: getColorForScore(match.team2Stats.endgame) }}
+                  sx={{ fontWeight: 'bold', color: getColorForScore(match.breakdown?.endgame || 0) }}
                 >
-                  {match.team2Stats.endgame.toFixed(1)} ({formatScoreCategory(match.team2Stats.endgame)})
+                  {(match.breakdown?.endgame || 0).toFixed(1)} ({formatScoreCategory(match.breakdown?.endgame || 0)})
                 </Typography>
               </Box>
             </Grid>
@@ -342,15 +335,21 @@ const AllianceMatchmaker = ({ season, eventCode, teams, teamEPAs }) => {
         {winProbResult && (
           <Box>
             <Typography variant="h6" gutterBottom>
-              Win Probability: {winProb !== null ? (winProb * 100).toFixed(1) : '?'}% (You &amp; Partner)
+              Win Probability: {winProb !== null ? (winProb * 100).toFixed(1) : '?'}%
             </Typography>
             <Typography variant="body1" gutterBottom>
-              Your Alliance: {winProbResult.yourAlliance.join(' & ')}
+              Your Alliance: Teams {winProbResult.yourAlliance.join(' & ')}
+            </Typography>
+            <Typography variant="body2" color="textSecondary" gutterBottom>
+              Your Alliance EPA: {winProbResult.yourAllianceEPA?.toFixed(1) || 'N/A'}
             </Typography>
             <Typography variant="body1" gutterBottom>
-              Highest EPA Opponents: {winProbResult.oppAlliance.join(' & ')}
+              Highest EPA Opponents: Teams {winProbResult.oppAlliance.join(' & ')}
             </Typography>
-            <Typography variant="body2" color="textSecondary">
+            <Typography variant="body2" color="textSecondary" gutterBottom>
+              Opponent EPA: {winProbResult.oppEPA?.toFixed(1) || 'N/A'}
+            </Typography>
+            <Typography variant="body2" color={winProb >= 0.5 ? 'success.main' : 'error.main'} sx={{ fontWeight: 'bold', mt: 2 }}>
               Predicted Winner: {winProb >= 0.5 ? 'Your Alliance' : 'Opponents'}
             </Typography>
           </Box>
@@ -411,13 +410,13 @@ const AllianceMatchmaker = ({ season, eventCode, teams, teamEPAs }) => {
         <DialogContent>
           <DialogContentText paragraph>
             {selectedPartner
-              ? `Win probability for you and Team ${selectedPartner.teamNumber2} vs. highest EPA alliance:`
-              : `Here are the best alliance partners for Team ${result?.teamNumber}, ordered by compatibility:`}
+              ? `Win probability for you and Team ${selectedPartner.teamNumber} vs. highest EPA alliance:`
+              : `Here are the top 3 best alliance partners for Team ${result?.team}, ordered by compatibility:`}
           </DialogContentText>
           {selectedPartner
             ? <WinProbabilityView />
-            : result?.bestMatches?.map((match, index) => (
-                <CompatibilityCard key={match.teamNumber2} match={match} index={index} />
+            : result?.partners?.slice(0, 3).map((match, index) => (
+                <CompatibilityCard key={match.teamNumber} match={match} index={index} />
               ))}
         </DialogContent>
         <DialogActions>

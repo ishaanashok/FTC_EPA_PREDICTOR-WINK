@@ -419,7 +419,7 @@ class FTCApi {
 
     async getBestAlliancePartner(season, eventCode, teamNumber) {
         try {
-            const response = await this.axiosInstance.post('/alliance-matchmaker', {
+            const response = await this.axiosInstance.post('/api/alliance', {
                 season,
                 eventCode,
                 teamNumber
@@ -434,11 +434,12 @@ class FTCApi {
     // Batch alliance matchmaker with precomputed EPAs
     async getBestAlliancePartnersBatch(season, eventCode, teamNumbers, teamEPAs = {}) {
         try {
-            const response = await this.axiosInstance.post('/alliance-matchmaker/batch', {
+            const response = await this.axiosInstance.post('/api/alliance', {
                 season,
                 eventCode,
-                teamNumbers,
-                teamEPAs
+                teamNumbers, // Send as array to indicate batch request
+                teamEPAs,
+                batch: true // Flag to indicate this is a batch request
             });
             return response.data;
         } catch (error) {
