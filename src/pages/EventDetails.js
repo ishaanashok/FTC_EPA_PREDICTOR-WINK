@@ -98,7 +98,19 @@ const EventDetails = () => {
       match.tournamentLevel?.toUpperCase() === "QUALIFICATION"
     );
     
-    return [...qualificationMatches].sort((a, b) => {
+    // Remove duplicates based on unique match identifier (season + eventCode + matchNumber + tournamentLevel)
+    const uniqueMatches = [];
+    const seenMatches = new Set();
+    
+    for (const match of qualificationMatches) {
+      const matchKey = `${match.season}-${match.eventCode}-${match.matchNumber}-${match.tournamentLevel}`;
+      if (!seenMatches.has(matchKey)) {
+        seenMatches.add(matchKey);
+        uniqueMatches.push(match);
+      }
+    }
+    
+    return [...uniqueMatches].sort((a, b) => {
       const matchNumA = parseInt(a.matchNumber);
       const matchNumB = parseInt(b.matchNumber);
       return matchNumA - matchNumB;
