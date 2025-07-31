@@ -109,8 +109,12 @@ const AddMatches = ({ season, eventCode, teams, onMatchesAdded }) => {
   };
 
   const addRow = () => {
+    // Get the highest ID and add 1, handle edge cases
+    const maxId = matches.length > 0 ? Math.max(...matches.map(m => m.id)) : -1;
+    const newId = Math.max(maxId + 1, matches.length);
+    
     const newMatch = {
-      id: Math.max(...matches.map(m => m.id)) + 1,
+      id: newId,
       matchNumber: '',
       red1: '',
       red2: '',
@@ -150,6 +154,8 @@ const AddMatches = ({ season, eventCode, teams, onMatchesAdded }) => {
   };
 
   const updateMatch = async (id, field, value) => {
+    console.log(`updateMatch called: id=${id}, field=${field}, value=${value}`);
+    
     const updatedMatches = matches.map(match => 
       match.id === id ? { ...match, [field]: value } : match
     );
@@ -225,6 +231,7 @@ const AddMatches = ({ season, eventCode, teams, onMatchesAdded }) => {
   };
 
   const convertToDbFormat = (match) => {
+    // Use match number directly as the qualification number in the match ID
     const matchId = `${season}-${eventCode}-QUALIFICATION-1-${match.matchNumber}`;
     const currentTime = new Date().toISOString();
     
@@ -295,9 +302,9 @@ const AddMatches = ({ season, eventCode, teams, onMatchesAdded }) => {
         throw new Error('You must be logged in as an administrator to add matches');
       }
 
-      // Filter out empty matches and validate
+      // Filter out empty matches and matches already saved to DynamoDB
       const filledMatches = matches.filter(match => 
-        match.matchNumber && match.red1 && match.red2 && match.blue1 && match.blue2
+        match.matchNumber && match.red1 && match.red2 && match.blue1 && match.blue2 && !match.savedToDynamoDB
       );
 
       if (filledMatches.length === 0) {
