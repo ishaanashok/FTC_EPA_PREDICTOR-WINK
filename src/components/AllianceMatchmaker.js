@@ -27,7 +27,7 @@ import {
   Tooltip
 } from '@mui/material';
 import Confetti from 'react-confetti';
-import FTCApi from '../services/ftcapi';
+import FTCApi from '../services/FTCApi';
 
 // Add method to FTCApi to handle batch processing
 FTCApi.prototype.getBestAlliancePartnersBatch = async function(season, eventCode, teamNumbers, teamEPAs = {}) {
