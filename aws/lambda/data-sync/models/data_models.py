@@ -199,27 +199,45 @@ class EventPrediction(DynamoDBBaseModel):
 
 class SyncStatus(DynamoDBBaseModel):
     """Sync status tracking with HTTP caching optimization"""
+    # DynamoDB Keys - Composite key for sync tracking
+    syncKey: str = Field(..., description="Composite key: {syncType}#{season}")  # Partition Key
+    lastSyncTime: datetime = Field(..., description="Last successful sync time")  # Sort Key
+    
+    # Sync metadata
     syncType: str = Field(..., description="Type of sync (teams, events, matches)")
     season: int = Field(..., description="Season")
-    lastSyncTime: datetime = Field(..., description="Last successful sync time")
     nextSyncTime: datetime = Field(..., description="Next scheduled sync time")
-    status: str = Field("pending", description="Sync status")
+    status: str = Field("pending", description="Sync status (pending, in_progress, completed, failed)")
     errorMessage: Optional[str] = Field(None, description="Error message if failed")
     recordsProcessed: int = Field(0, description="Number of records processed")
     recordsUpdated: int = Field(0, description="Number of records updated")
     
-    # HTTP Caching Support for bandwidth optimization
+    # HTTP Caching Support for FTC API optimization
     lastModifiedHeader: Optional[str] = Field(None, description="Last-Modified from API response")
-    ifModifiedSinceUsed: Optional[str] = Field(None, description="If-Modified-Since used in request")
-    fmsOnlyModifiedSinceUsed: Optional[str] = Field(None, description="FMS-OnlyModifiedSince used in request")
+    ifModifiedSinceUsed: Optional[str] = Field(None, description="If-Modified-Since sent in request")
+    fmsOnlyModifiedSinceUsed: Optional[str] = Field(None, description="FMS-OnlyModifiedSince sent in request")
     etag: Optional[str] = Field(None, description="ETag from API response")
     dataChanged: bool = Field(True, description="Whether data was modified (not 304)")
     bandwidthSaved: int = Field(0, description="Bytes saved due to conditional requests")
+    responseSize: int = Field(0, description="Response size in bytes")
+    
+    # FTC API specific fields
+    apiEndpoint: Optional[str] = Field(None, description="FTC API endpoint called")
+    eventCode: Optional[str] = Field(None, description="Event code for match-specific syncs")
+    totalPages: Optional[int] = Field(None, description="Total pages in paginated response")
+    currentPage: Optional[int] = Field(None, description="Current page processed")
     
     class Config:
         json_encoders = {
             datetime: lambda v: v.isoformat()
         }
+    
+    @classmethod
+    def create_sync_key(cls, sync_type: str, season: int, event_code: Optional[str] = None) -> str:
+        """Create composite sync key for DynamoDB"""
+        if event_code:
+            return f"{sync_type}#{season}#{event_code}"
+        return f"{sync_type}#{season}"
 
 # ApiCacheMetadata removed - HTTP caching metadata now stored in main data models
 

@@ -21,6 +21,7 @@ class DynamoDBService:
         self.events_table = self.dynamodb.Table(f'FTC_Events_{environment}')
         self.matches_table = self.dynamodb.Table(f'FTC_Matches_{environment}')
         self.epa_table = self.dynamodb.Table(f'FTC_EPA_{environment}')
+        self.sync_status_table = self.dynamodb.Table(f'FTC_SyncStatus_{environment}')
         # Cache table removed - no longer using caching layer
     
     def convert_to_dynamodb_item(self, item: Dict[str, Any]) -> Dict[str, Any]:
@@ -153,6 +154,83 @@ class DynamoDBService:
             
         except ClientError as e:
             logger.error(f"Error getting events for season {season}: {str(e)}")
+            return []
+    
+    # Sync Status Management Methods
+    async def get_sync_status(self, sync_type: str, season: int, event_code: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Get the most recent sync status for a specific sync type and season"""
+        try:
+            from models.data_models import SyncStatus
+            
+            sync_key = SyncStatus.create_sync_key(sync_type, season, event_code)
+            
+            # Query for the most recent sync status (DynamoDB sorts by sort key)
+            response = self.sync_status_table.query(
+                KeyConditionExpression=Key('syncKey').eq(sync_key),
+                ScanIndexForward=False,  # Sort descending to get most recent first
+                Limit=1
+            )
+            
+            if response['Items']:
+                # Convert from DynamoDB format
+                sync_status_item = self.convert_from_dynamodb_item(response['Items'][0])
+                logger.info(f"Retrieved sync status for {sync_key}: last sync {sync_status_item.get('lastSyncTime')}")
+                return sync_status_item
+            else:
+                logger.info(f"No sync status found for {sync_key}")
+                return None
+                
+        except ClientError as e:
+            logger.error(f"Error getting sync status for {sync_type}/{season}: {str(e)}")
+            return None
+        except Exception as e:
+            logger.error(f"Unexpected error getting sync status: {str(e)}")
+            return None
+    
+    async def save_sync_status(self, sync_status_dict: Dict[str, Any]) -> bool:
+        """Save sync status to DynamoDB"""
+        try:
+            # Convert to DynamoDB format
+            sync_status_item = self.convert_to_dynamodb_item(sync_status_dict)
+            
+            # Save to DynamoDB
+            self.sync_status_table.put_item(Item=sync_status_item)
+            
+            logger.info(f"Sync status saved: {sync_status_dict.get('syncKey')} - {sync_status_dict.get('status')}")
+            return True
+            
+        except ClientError as e:
+            logger.error(f"Error saving sync status: {str(e)}")
+            return False
+        except Exception as e:
+            logger.error(f"Unexpected error saving sync status: {str(e)}")
+            return False
+    
+    async def get_sync_history(self, sync_type: str, season: int, limit: int = 10, event_code: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Get sync history for a specific sync type and season"""
+        try:
+            from models.data_models import SyncStatus
+            
+            sync_key = SyncStatus.create_sync_key(sync_type, season, event_code)
+            
+            response = self.sync_status_table.query(
+                KeyConditionExpression=Key('syncKey').eq(sync_key),
+                ScanIndexForward=False,  # Most recent first
+                Limit=limit
+            )
+            
+            history = []
+            for item in response['Items']:
+                history.append(self.convert_from_dynamodb_item(item))
+            
+            logger.info(f"Retrieved {len(history)} sync history records for {sync_key}")
+            return history
+            
+        except ClientError as e:
+            logger.error(f"Error getting sync history for {sync_type}/{season}: {str(e)}")
+            return []
+        except Exception as e:
+            logger.error(f"Unexpected error getting sync history: {str(e)}")
             return []
     
     # Match operations

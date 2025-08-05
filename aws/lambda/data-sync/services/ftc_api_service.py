@@ -61,6 +61,7 @@ class FTCApiService:
     
     async def make_conditional_request(self, endpoint: str, params: Optional[Dict[str, Any]] = None,
                                      if_modified_since: Optional[str] = None,
+                                     fms_only_modified_since: Optional[str] = None,
                                      if_none_match: Optional[str] = None,
                                      max_retries: int = 3) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
         """
@@ -70,6 +71,7 @@ class FTCApiService:
             endpoint: API endpoint path
             params: Query parameters
             if_modified_since: If-Modified-Since header value
+            fms_only_modified_since: FMS-OnlyModifiedSince header value (FTC API specific)
             if_none_match: If-None-Match header value (ETag)
             max_retries: Maximum number of retry attempts
         
@@ -83,14 +85,20 @@ class FTCApiService:
         
         url = f"{self.base_url}{endpoint}"
         
-        # Build conditional headers
+        # Build conditional headers following FTC API documentation
         conditional_headers = {}
         
+        # Standard HTTP caching headers
         if if_modified_since:
             conditional_headers['If-Modified-Since'] = if_modified_since
-            # Also try FTC-specific header
-            conditional_headers['FMS-OnlyModifiedSince'] = if_modified_since
         
+        # FTC-specific incremental sync header
+        # Per FTC API docs: FMS-OnlyModifiedSince returns only records modified since the specified date
+        if fms_only_modified_since:
+            conditional_headers['FMS-OnlyModifiedSince'] = fms_only_modified_since
+            logger.info(f"Using FMS-OnlyModifiedSince for incremental sync: {fms_only_modified_since}")
+        
+        # ETag-based caching
         if if_none_match:
             conditional_headers['If-None-Match'] = if_none_match
         
@@ -121,9 +129,10 @@ class FTCApiService:
                     
                     # Handle 304 Not Modified
                     if response.status == 304:
-                        logger.info(f"[FTC API] 304 Not Modified: {endpoint}")
+                        logger.info(f"[FTC API] 304 Not Modified: {endpoint} - No changes since last sync")
                         metadata['dataChanged'] = False
                         metadata['bandwidthSaved'] = 1  # Indicate bandwidth was saved
+                        metadata['responseSize'] = 0  # No content in 304 response
                         
                         return None, metadata
                     
@@ -182,12 +191,14 @@ class FTCApiService:
         
         # Extract conditional request parameters
         if_modified_since = params.pop('if_modified_since', None)
+        fms_only_modified_since = params.pop('fms_only_modified_since', None)
         if_none_match = params.pop('if_none_match', None)
         
         response, metadata = await self.make_conditional_request(
             endpoint, 
             params,
             if_modified_since=if_modified_since,
+            fms_only_modified_since=fms_only_modified_since,
             if_none_match=if_none_match
         )
         
@@ -213,12 +224,14 @@ class FTCApiService:
         
         # Extract conditional request parameters
         if_modified_since = params.pop('if_modified_since', None)
+        fms_only_modified_since = params.pop('fms_only_modified_since', None)
         if_none_match = params.pop('if_none_match', None)
         
         response, metadata = await self.make_conditional_request(
             endpoint, 
             params,
             if_modified_since=if_modified_since,
+            fms_only_modified_since=fms_only_modified_since,
             if_none_match=if_none_match
         )
         # Handle the response based on the API structure

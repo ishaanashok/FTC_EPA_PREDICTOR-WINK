@@ -124,8 +124,8 @@ class DataSyncService:
                 # Create team-match record with denormalized format
                 team_match_id = f"{match.season}-TEAM-{team_number_int}-{match.matchId}"
                 
-                # Convert match to dict and add team-specific fields
-                match_dict = match.to_dict()
+                # Convert match to dict and add team-specific fields (Pydantic v1)
+                match_dict = match.dict()
                 match_dict.update({
                     'matchId': team_match_id,
                     'teamNumber': team_number_int,
@@ -179,23 +179,56 @@ class DataSyncService:
         
         return saved_count
     
-    async def get_sync_status(self, sync_type: str, season: int) -> Optional[SyncStatus]:
+    async def get_sync_status(self, sync_type: str, season: int, event_code: Optional[str] = None) -> Optional[SyncStatus]:
         """Get the last sync status for a specific type"""
         try:
-            # This is a simplified version - in a real implementation you'd store sync status
-            # in DynamoDB with a composite key of syncType and season
-            return None
+            sync_status_dict = await self.db_service.get_sync_status(sync_type, season, event_code)
+            
+            if sync_status_dict:
+                # Convert dict back to SyncStatus model
+                return SyncStatus(**sync_status_dict)
+            else:
+                return None
+                
         except Exception as e:
-            logger.error(f"Error getting sync status: {str(e)}")
+            logger.error(f"Error getting sync status for {sync_type}/{season}: {str(e)}")
             return None
     
     async def update_sync_status(self, sync_status: SyncStatus):
         """Update sync status in DynamoDB"""
         try:
-            # This is a simplified version - in a real implementation you'd store this in DynamoDB
-            logger.info(f"Sync status updated: {sync_status.syncType} - {sync_status.status}")
+            # Convert SyncStatus model to dict (Pydantic v1)
+            sync_status_dict = sync_status.dict()
+            
+            # Save to DynamoDB
+            success = await self.db_service.save_sync_status(sync_status_dict)
+            
+            if success:
+                logger.info(f"Sync status updated: {sync_status.syncType} - {sync_status.status}")
+            else:
+                logger.error(f"Failed to save sync status: {sync_status.syncType}")
+                
         except Exception as e:
             logger.error(f"Error updating sync status: {str(e)}")
+    
+    async def get_sync_history(self, sync_type: str, season: int, limit: int = 10, event_code: Optional[str] = None) -> List[SyncStatus]:
+        """Get sync history for a specific sync type and season"""
+        try:
+            history_dicts = await self.db_service.get_sync_history(sync_type, season, limit, event_code)
+            
+            history = []
+            for sync_dict in history_dicts:
+                try:
+                    history.append(SyncStatus(**sync_dict))
+                except Exception as e:
+                    logger.warning(f"Error converting sync status record: {str(e)}")
+                    continue
+            
+            return history
+            
+        except Exception as e:
+            logger.error(f"Error getting sync history: {str(e)}")
+            return []
     
     async def sync_teams(self, season: Optional[int] = None) -> Dict[str, Any]:
         """Sync teams data with HTTP caching optimization"""
@@ -205,11 +238,15 @@ class DataSyncService:
         print(f"DEBUG: sync_teams called with season={season}, type={type(season)}")
         
         try:
+            current_time = datetime.now(timezone.utc)
+            sync_key = SyncStatus.create_sync_key("teams", season)
+            
             sync_status = SyncStatus(
+                syncKey=sync_key,
                 syncType="teams",
                 season=season,
-                lastSyncTime=datetime.now(timezone.utc),
-                nextSyncTime=datetime.now(timezone.utc),
+                lastSyncTime=current_time,
+                nextSyncTime=current_time,
                 status="in_progress",
                 errorMessage=None,
                 recordsProcessed=0,
@@ -219,12 +256,13 @@ class DataSyncService:
                 fmsOnlyModifiedSinceUsed=None,
                 etag=None,
                 dataChanged=True,
-                bandwidthSaved=0
+                bandwidthSaved=0,
+                responseSize=0,
+                apiEndpoint=f"/{season}/teams"
             )
-            print(f"DEBUG: SyncStatus created successfully")
+            logger.info(f"Starting teams sync for season {season}")
         except Exception as e:
-            print(f"DEBUG: SyncStatus creation failed: {e}")
-            print(f"DEBUG: season value: {season}, type: {type(season)}")
+            logger.error(f"SyncStatus creation failed: {e}")
             raise ValueError(f"SyncStatus creation failed with season={season}: {e}")
         
         try:
@@ -237,20 +275,36 @@ class DataSyncService:
             # Get last sync status to retrieve caching headers
             last_sync = await self.get_sync_status("teams", season)
             
-            # Make conditional request using stored headers
-            if_modified_since = last_sync.lastModifiedHeader if last_sync else None
+            # Prepare conditional request headers following FTC API documentation
+            if_modified_since = None
+            fms_only_modified_since = None
             
+            if last_sync:
+                # Use FMS-OnlyModifiedSince for incremental sync as per FTC API docs
+                if last_sync.lastModifiedHeader:
+                    fms_only_modified_since = last_sync.lastModifiedHeader
+                    if_modified_since = last_sync.lastModifiedHeader
+                    logger.info(f"Using incremental sync with FMS-OnlyModifiedSince: {fms_only_modified_since}")
+                else:
+                    logger.info("No previous Last-Modified header found, performing full sync")
+            else:
+                logger.info("No previous sync status found, performing initial sync")
+            
+            # Make conditional request to FTC API
             teams_data, metadata = await self.ftc_api.get_teams(
                 season, 
-                if_modified_since=if_modified_since
+                if_modified_since=if_modified_since,
+                fms_only_modified_since=fms_only_modified_since
             )
             
             # Update sync status with HTTP caching info
             sync_status.lastModifiedHeader = metadata.get('lastModified')
             sync_status.etag = metadata.get('etag')
             sync_status.ifModifiedSinceUsed = if_modified_since
-            sync_status.dataChanged = metadata.get('dataChanged', True)
+            sync_status.fmsOnlyModifiedSinceUsed = fms_only_modified_since
+            sync_status.responseSize = metadata.get('responseSize', 0)
             sync_status.bandwidthSaved = metadata.get('bandwidthSaved', 0)
+            sync_status.dataChanged = metadata.get('dataChanged', True)
             
             if not metadata.get('dataChanged', True):
                 # 304 Not Modified - no changes
@@ -290,7 +344,7 @@ class DataSyncService:
                     team.dataHash = self._calculate_data_hash(team_data)
                     
                     # Check if team exists and needs updating
-                    existing_team = await self.db_service.get_team(team.teamNumber, season)
+                    existing_team = self.db_service.get_team(team.teamNumber, season)
                     
                     should_update = True
                     if existing_team:
@@ -324,13 +378,18 @@ class DataSyncService:
                             logger.error(f"Error saving individual team {team_item.get('teamNumber', 'unknown')}: {str(save_error)}")
                             teams_updated -= 1  # Adjust count for failed saves
             
+            # Finalize sync status
             sync_status.status = "completed"
             sync_status.recordsProcessed = teams_processed
             sync_status.recordsUpdated = teams_updated
+            sync_status.lastSyncTime = datetime.now(timezone.utc)
+            sync_status.errorMessage = None
             
+            # Save final sync status to DynamoDB
             await self.update_sync_status(sync_status)
             
-            logger.info(f"Teams sync completed: {teams_processed} processed, {teams_updated} updated")
+            logger.info(f"Teams sync completed: {teams_processed} processed, {teams_updated} updated, "
+                       f"bandwidth saved: {sync_status.bandwidthSaved}, data changed: {sync_status.dataChanged}")
             
             return {
                 "success": True,
@@ -354,11 +413,15 @@ class DataSyncService:
         if season is None:
             season = self.current_season
         
+        current_time = datetime.now(timezone.utc)
+        sync_key = SyncStatus.create_sync_key("events", season)
+        
         sync_status = SyncStatus(
+            syncKey=sync_key,
             syncType="events",
             season=season,
-            lastSyncTime=datetime.now(timezone.utc),
-            nextSyncTime=datetime.now(timezone.utc),
+            lastSyncTime=current_time,
+            nextSyncTime=current_time,
             status="in_progress",
             errorMessage=None,
             recordsProcessed=0,
@@ -368,7 +431,9 @@ class DataSyncService:
             fmsOnlyModifiedSinceUsed=None,
             etag=None,
             dataChanged=True,
-            bandwidthSaved=0
+            bandwidthSaved=0,
+            responseSize=0,
+            apiEndpoint=f"/{season}/events"
         )
         
         try:
@@ -441,7 +506,7 @@ class DataSyncService:
                     
                     if should_update:
                         # Save to DynamoDB
-                        await self.db_service.events_table.put_item(
+                        self.db_service.events_table.put_item(
                             Item=event.to_dynamodb_item()
                         )
                         events_updated += 1
@@ -536,7 +601,7 @@ class DataSyncService:
                         
                         if should_update:
                             # Save regular match record to DynamoDB
-                            await self.db_service.matches_table.put_item(
+                            self.db_service.matches_table.put_item(
                                 Item=match.to_dynamodb_item()
                             )
                             
@@ -580,7 +645,7 @@ class DataSyncService:
                         
                         if should_update:
                             # Save regular match record to DynamoDB
-                            await self.db_service.matches_table.put_item(
+                            self.db_service.matches_table.put_item(
                                 Item=match.to_dynamodb_item()
                             )
                             
