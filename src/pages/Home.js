@@ -57,7 +57,7 @@ function Home() {
           <Card>
             <CardContent>
               <Typography variant="h5" gutterBottom>
-                Why Choose Inkistics?
+                Why Choose WinK?
               </Typography>
               <Typography variant="body1" paragraph>
                 Our platform provides comprehensive tools for FTC teams and enthusiasts:

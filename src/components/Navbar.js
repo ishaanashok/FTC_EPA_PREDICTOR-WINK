@@ -22,7 +22,7 @@ function Navbar() {
         <Box sx={{ display: 'flex', alignItems: 'center', flexGrow: 1 }}>
           <img 
             src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcT0Tvvq76mlrXBo5WZSHZe3JUqS9c6U0UKd6A&s" 
-            alt="Inkistics Logo" 
+            alt="WinK Logo" 
             style={{ 
               height: '40px', 
               width: '40px', 
@@ -40,7 +40,7 @@ function Navbar() {
               fontWeight: 'bold'
             }}
           >
-            Inkistics
+            WinK
           </Typography>
         </Box>
 
