@@ -7,26 +7,39 @@ from decimal import Decimal
 from boto3.dynamodb.conditions import Key, Attr
 from botocore.exceptions import ClientError
 import time
+import os
 
 logger = logging.getLogger(__name__)
 
 class DynamoDBService:
-    """Service layer for DynamoDB operations"""
+    """
+    Updated DynamoDB service for new schema (v2.0)
     
-    def __init__(self, environment: str = 'dev'):
+    Key Changes:
+    - EPA table renamed to TeamMatchEPA with new composite key structure
+    - Events table uses eventId as primary key
+    - Updated index names to match new schema
+    - Removed SyncStatus table (not in new schema)
+    """
+    
+    def __init__(self, environment: str = None):
         self.dynamodb = boto3.resource('dynamodb')
+        
+        # Get environment from parameter or environment variable
+        if environment is None:
+            environment = os.environ.get('ENVIRONMENT', 'stage')
         self.environment = environment
         
         # Initialize simple in-memory cache for EPA calculations
         self._cache = {}
         
-        # Initialize tables
-        # Ensure self.dynamodb is a boto3 DynamoDB resource, which has the Table attribute
+        # Initialize tables with environment-specific names (NEW SCHEMA)
         self.teams_table = self.dynamodb.Table(f'FTC_Teams_{environment}')
         self.events_table = self.dynamodb.Table(f'FTC_Events_{environment}')
         self.matches_table = self.dynamodb.Table(f'FTC_Matches_{environment}')
-        self.epa_table = self.dynamodb.Table(f'FTC_EPA_{environment}')
-        # Cache table removed - no longer using caching layer
+        self.team_match_epa_table = self.dynamodb.Table(f'FTC_TeamMatchEPA_{environment}')
+        
+        logger.info(f"DynamoDBService initialized for environment: {environment} (Schema v2.0)")
     
     def convert_to_dynamodb_item(self, item: Dict[str, Any]) -> Dict[str, Any]:
         """Convert item to DynamoDB compatible format"""
@@ -34,11 +47,14 @@ class DynamoDBService:
             if isinstance(value, float):
                 return Decimal(str(value))
             elif isinstance(value, dict):
-                return {k: convert_value(v) for k, v in value.items()}
+                return {k: convert_value(v) for k, v in value.items() if v is not None}
             elif isinstance(value, list):
                 return [convert_value(v) for v in value]
             elif isinstance(value, datetime):
                 return value.isoformat()
+            # Handle empty strings in GSI keys
+            elif isinstance(value, str) and not value.strip():
+                return None
             return value
         
         result = convert_value(item)
@@ -62,7 +78,10 @@ class DynamoDBService:
             raise TypeError("convert_from_dynamodb_item must return a dictionary")
         return result
     
-    # Team operations
+    # ========================================================================
+    # TEAM OPERATIONS
+    # ========================================================================
+    
     def get_team(self, team_number: int, season: int) -> Optional[Dict[str, Any]]:
         """Get a specific team"""
         try:
@@ -78,94 +97,142 @@ class DynamoDBService:
             logger.error(f"Error getting team {team_number} for season {season}: {str(e)}")
             return None
     
-    def get_teams_by_season(self, season: int, limit: int = 100) -> List[Dict[str, Any]]:
-        """Get all teams for a season"""
+    def get_teams_by_season(self, season: int, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Get all teams for a season using SeasonIndex"""
         try:
-            response = self.teams_table.query(
-                IndexName='SeasonIndex',
-                KeyConditionExpression=Key('season').eq(season),
-                Limit=limit
-            )
-            
             teams = []
-            for item in response.get('Items', []):
-                teams.append(self.convert_from_dynamodb_item(item))
+            last_evaluated_key = None
             
-            return teams
+            while True:
+                query_kwargs = {
+                    'IndexName': 'SeasonIndex',
+                    'KeyConditionExpression': Key('season').eq(season)
+                }
+                
+                if limit is not None:
+                    query_kwargs['Limit'] = limit
+                
+                if last_evaluated_key:
+                    query_kwargs['ExclusiveStartKey'] = last_evaluated_key
+                
+                response = self.teams_table.query(**query_kwargs)
+                
+                for item in response.get('Items', []):
+                    teams.append(self.convert_from_dynamodb_item(item))
+                
+                last_evaluated_key = response.get('LastEvaluatedKey')
+                if not last_evaluated_key or (limit and len(teams) >= limit):
+                    break
+            
+            return teams[:limit] if limit else teams
             
         except ClientError as e:
             logger.error(f"Error getting teams for season {season}: {str(e)}")
             return []
     
-    def get_teams_by_event(self, season: int, event_code: str) -> List[Dict[str, Any]]:
-        """Get teams participating in a specific event"""
+    def get_teams_by_country(self, country: str, season: int) -> List[Dict[str, Any]]:
+        """Get teams by country using CountrySeasonIndex"""
         try:
-            # First try to get teams from event's teamNumbers field
-            teams = self.get_teams_by_event_from_roster(season, event_code)
-            if teams:
-                return teams
-            
-            # Fallback to old method (get from matches)
-            matches = self.get_matches_by_event(season, event_code)
-            
-            # Extract unique team numbers
-            team_numbers = set()
-            for match in matches:
-                team_numbers.update(match.get('allTeams', []))
-            
-            # Get team details
             teams = []
-            for team_number in team_numbers:
-                team = self.get_team(team_number, season)
-                if team:
-                    teams.append(team)
+            last_evaluated_key = None
             
-            return teams
-            
-        except Exception as e:
-            logger.error(f"Error getting teams for event {event_code}: {str(e)}")
-            return []
-    
-    def get_teams_by_event_from_roster(self, season: int, event_code: str) -> List[Dict[str, Any]]:
-        """Get teams participating in a specific event from event's team roster"""
-        try:
-            # Get the event to get team numbers
-            event = self.get_event(event_code, season)
-            
-            if not event or not event.get('teamNumbers'):
-                logger.info(f"No team numbers found in event roster for {event_code} in season {season}")
-                return []
-            
-            # Parse team numbers from comma-separated string
-            team_numbers_str = event.get('teamNumbers', '')
-            if not team_numbers_str:
-                return []
+            while True:
+                query_kwargs = {
+                    'IndexName': 'CountrySeasonIndex',
+                    'KeyConditionExpression': Key('country').eq(country) & Key('season').eq(season)
+                }
                 
-            team_numbers = [int(num.strip()) for num in team_numbers_str.split(',') if num.strip()]
-            logger.info(f"Found {len(team_numbers)} team numbers in event {event_code} roster")
+                if last_evaluated_key:
+                    query_kwargs['ExclusiveStartKey'] = last_evaluated_key
+                
+                response = self.teams_table.query(**query_kwargs)
+                
+                for item in response.get('Items', []):
+                    teams.append(self.convert_from_dynamodb_item(item))
+                
+                last_evaluated_key = response.get('LastEvaluatedKey')
+                if not last_evaluated_key:
+                    break
             
-            # Get team details
-            teams = []
-            for team_number in team_numbers:
-                team = self.get_team(team_number, season)
-                if team:
-                    teams.append(team)
-                else:
-                    logger.warning(f"Team {team_number} not found in teams table for season {season}")
-            
-            logger.info(f"Successfully retrieved {len(teams)} team details for event {event_code}")
             return teams
             
-        except Exception as e:
-            logger.error(f"Error getting teams from event roster for {event_code}: {str(e)}")
+        except ClientError as e:
+            logger.error(f"Error getting teams for country {country}, season {season}: {str(e)}")
             return []
     
-    # Event operations
-    def get_event(self, event_code: str, season: int) -> Optional[Dict[str, Any]]:
-        """Get a specific event"""
+    def get_teams_by_region(self, region: str, season: int) -> List[Dict[str, Any]]:
+        """Get teams by region using RegionSeasonIndex"""
+        try:
+            teams = []
+            last_evaluated_key = None
+            
+            while True:
+                query_kwargs = {
+                    'IndexName': 'RegionSeasonIndex',
+                    'KeyConditionExpression': Key('homeRegion').eq(region) & Key('season').eq(season)
+                }
+                
+                if last_evaluated_key:
+                    query_kwargs['ExclusiveStartKey'] = last_evaluated_key
+                
+                response = self.teams_table.query(**query_kwargs)
+                
+                for item in response.get('Items', []):
+                    teams.append(self.convert_from_dynamodb_item(item))
+                
+                last_evaluated_key = response.get('LastEvaluatedKey')
+                if not last_evaluated_key:
+                    break
+            
+            return teams
+            
+        except ClientError as e:
+            logger.error(f"Error getting teams for region {region}, season {season}: {str(e)}")
+            return []
+    
+    def save_team(self, team_data: Dict[str, Any]) -> bool:
+        """Save a team to DynamoDB"""
+        try:
+            # Ensure required GSI fields have defaults
+            if 'country' not in team_data or not team_data['country']:
+                team_data['country'] = 'UNKNOWN'
+            if 'homeRegion' not in team_data or not team_data['homeRegion']:
+                team_data['homeRegion'] = 'UNKNOWN'
+            
+            dynamodb_item = self.convert_to_dynamodb_item(team_data)
+            self.teams_table.put_item(Item=dynamodb_item)
+            return True
+        except ClientError as e:
+            logger.error(f"Error saving team {team_data.get('teamNumber')}: {str(e)}")
+            return False
+    
+    def batch_save_teams(self, teams: List[Dict[str, Any]]) -> bool:
+        """Save multiple teams efficiently"""
+        try:
+            with self.teams_table.batch_writer() as batch:
+                for team in teams:
+                    # Ensure required GSI fields have defaults
+                    if 'country' not in team or not team['country']:
+                        team['country'] = 'UNKNOWN'
+                    if 'homeRegion' not in team or not team['homeRegion']:
+                        team['homeRegion'] = 'UNKNOWN'
+                    
+                    dynamodb_item = self.convert_to_dynamodb_item(team)
+                    batch.put_item(Item=dynamodb_item)
+            return True
+        except ClientError as e:
+            logger.error(f"Error batch saving teams: {str(e)}")
+            return False
+    
+    # ========================================================================
+    # EVENT OPERATIONS (Updated for new schema)
+    # ========================================================================
+    
+    def get_event_by_id(self, event_id: str) -> Optional[Dict[str, Any]]:
+        """Get a specific event by eventId (primary key)"""
         try:
             response = self.events_table.get_item(
-                Key={'eventCode': event_code, 'season': season}
+                Key={'eventId': event_id}
             )
             
             if 'Item' in response:
@@ -173,34 +240,169 @@ class DynamoDBService:
             return None
             
         except ClientError as e:
+            logger.error(f"Error getting event {event_id}: {str(e)}")
+            return None
+    
+    def get_event(self, event_code: str, season: int) -> Optional[Dict[str, Any]]:
+        """Get a specific event by code and season using CodeSeasonIndex"""
+        try:
+            response = self.events_table.query(
+                IndexName='CodeSeasonIndex',
+                KeyConditionExpression=Key('code').eq(event_code) & Key('season').eq(season),
+                Limit=1
+            )
+            
+            if response.get('Items'):
+                return self.convert_from_dynamodb_item(response['Items'][0])
+            return None
+            
+        except ClientError as e:
             logger.error(f"Error getting event {event_code} for season {season}: {str(e)}")
             return None
     
     def get_events_by_season(self, season: int, limit: Optional[int] = None) -> List[Dict[str, Any]]:
-        """Get all events for a season"""
+        """Get all events for a season using SeasonDateIndex (sorted by date)"""
         try:
-            query_kwargs = {
-                'IndexName': 'SeasonIndex',
-                'KeyConditionExpression': Key('season').eq(season)
-            }
-            
-            if limit is not None:
-                query_kwargs['Limit'] = limit
-            
-            response = self.events_table.query(**query_kwargs)
-            
             events = []
-            for item in response.get('Items', []):
-                events.append(self.convert_from_dynamodb_item(item))
+            last_evaluated_key = None
             
-            return events
+            while True:
+                query_kwargs = {
+                    'IndexName': 'SeasonDateIndex',
+                    'KeyConditionExpression': Key('season').eq(season),
+                    'ScanIndexForward': True  # Sort by dateStart ascending
+                }
+                
+                if limit is not None:
+                    query_kwargs['Limit'] = limit
+                
+                if last_evaluated_key:
+                    query_kwargs['ExclusiveStartKey'] = last_evaluated_key
+                
+                response = self.events_table.query(**query_kwargs)
+                
+                for item in response.get('Items', []):
+                    events.append(self.convert_from_dynamodb_item(item))
+                
+                last_evaluated_key = response.get('LastEvaluatedKey')
+                if not last_evaluated_key or (limit and len(events) >= limit):
+                    break
+            
+            return events[:limit] if limit else events
             
         except ClientError as e:
             logger.error(f"Error getting events for season {season}: {str(e)}")
             return []
     
-    # Match operations
-    async def get_match(self, match_id: str) -> Optional[Dict[str, Any]]:
+    def get_events_by_region(self, region_code: str, season: int) -> List[Dict[str, Any]]:
+        """Get events by region using RegionSeasonIndex"""
+        try:
+            events = []
+            last_evaluated_key = None
+            
+            while True:
+                query_kwargs = {
+                    'IndexName': 'RegionSeasonIndex',
+                    'KeyConditionExpression': Key('regionCode').eq(region_code) & Key('season').eq(season)
+                }
+                
+                if last_evaluated_key:
+                    query_kwargs['ExclusiveStartKey'] = last_evaluated_key
+                
+                response = self.events_table.query(**query_kwargs)
+                
+                for item in response.get('Items', []):
+                    events.append(self.convert_from_dynamodb_item(item))
+                
+                last_evaluated_key = response.get('LastEvaluatedKey')
+                if not last_evaluated_key:
+                    break
+            
+            return events
+            
+        except ClientError as e:
+            logger.error(f"Error getting events for region {region_code}, season {season}: {str(e)}")
+            return []
+    
+    def get_events_by_team(self, season: int, team_number: int) -> List[Dict[str, Any]]:
+        """
+        Get all events that a team participated in for a given season.
+        This queries the TeamMatchEPA table to find all events the team played in,
+        then fetches the event details.
+        """
+        try:
+            # Query TeamMatchEPA table to find all matches for this team in this season
+            response = self.team_match_epa_table.query(
+                IndexName='TeamSeasonIndex',
+                KeyConditionExpression=Key('teamNumber').eq(int(team_number)) & Key('season').eq(season)
+            )
+            
+            # Extract unique event codes from the matches
+            event_codes = set()
+            for item in response.get('Items', []):
+                event_code = item.get('eventCode')
+                if event_code and event_code != 'UNKNOWN':
+                    event_codes.add(event_code)
+            
+            # Fetch event details for each unique event code
+            events = []
+            for event_code in event_codes:
+                event = self.get_event(event_code, season)
+                if event:
+                    events.append(event)
+            
+            # Sort events by start date
+            events.sort(key=lambda e: e.get('dateStart', ''))
+            
+            return events
+            
+        except ClientError as e:
+            logger.error(f"Error getting events for team {team_number}, season {season}: {str(e)}")
+            return []
+    
+    def save_event(self, event_data: Dict[str, Any]) -> bool:
+        """Save an event to DynamoDB"""
+        try:
+            # Ensure required GSI fields have defaults
+            if 'code' not in event_data or not event_data['code']:
+                event_data['code'] = 'UNKNOWN'
+            if 'dateStart' not in event_data or not event_data['dateStart']:
+                event_data['dateStart'] = '1970-01-01T00:00:00'
+            if 'regionCode' not in event_data or not event_data['regionCode']:
+                event_data['regionCode'] = 'UNKNOWN'
+            
+            dynamodb_item = self.convert_to_dynamodb_item(event_data)
+            self.events_table.put_item(Item=dynamodb_item)
+            return True
+        except ClientError as e:
+            logger.error(f"Error saving event {event_data.get('eventId')}: {str(e)}")
+            return False
+    
+    def batch_save_events(self, events: List[Dict[str, Any]]) -> bool:
+        """Save multiple events efficiently"""
+        try:
+            with self.events_table.batch_writer() as batch:
+                for event in events:
+                    # Ensure required GSI fields have defaults
+                    if 'code' not in event or not event['code']:
+                        event['code'] = 'UNKNOWN'
+                    if 'dateStart' not in event or not event['dateStart']:
+                        event['dateStart'] = '1970-01-01T00:00:00'
+                    if 'regionCode' not in event or not event['regionCode']:
+                        event['regionCode'] = 'UNKNOWN'
+                    
+                    dynamodb_item = self.convert_to_dynamodb_item(event)
+                    batch.put_item(Item=dynamodb_item)
+            return True
+        except ClientError as e:
+            logger.error(f"Error batch saving events: {str(e)}")
+            return False
+    
+    # ========================================================================
+    # MATCH OPERATIONS (Updated index names)
+    # ========================================================================
+    
+    def get_match(self, match_id: str) -> Optional[Dict[str, Any]]:
         """Get a specific match"""
         try:
             response = self.matches_table.get_item(
@@ -215,25 +417,36 @@ class DynamoDBService:
             logger.error(f"Error getting match {match_id}: {str(e)}")
             return None
     
-    async def get_matches_by_event(self, season: int, event_code: str, 
-                                  tournament_level: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Get matches for a specific event"""
+    def get_matches_by_event(self, event_code: str, season: int, 
+                            tournament_level: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Get matches for a specific event using EventSeasonIndex"""
         try:
-            # Use GSI to query by event
             key_condition = Key('eventCode').eq(event_code) & Key('season').eq(season)
             
-            response = self.matches_table.query(
-                IndexName='EventIndex',
-                KeyConditionExpression=key_condition
-            )
-            
             matches = []
-            for item in response.get('Items', []):
-                match = self.convert_from_dynamodb_item(item)
+            last_evaluated_key = None
+            
+            while True:
+                query_kwargs = {
+                    'IndexName': 'EventSeasonIndex',
+                    'KeyConditionExpression': key_condition
+                }
                 
-                # Filter by tournament level if specified
-                if tournament_level is None or match.get('tournamentLevel', '').lower() == tournament_level.lower():
-                    matches.append(match)
+                if last_evaluated_key:
+                    query_kwargs['ExclusiveStartKey'] = last_evaluated_key
+                
+                response = self.matches_table.query(**query_kwargs)
+                
+                for item in response.get('Items', []):
+                    match = self.convert_from_dynamodb_item(item)
+                    
+                    # Filter by tournament level if specified
+                    if tournament_level is None or match.get('tournamentLevel', '').lower() == tournament_level.lower():
+                        matches.append(match)
+                
+                last_evaluated_key = response.get('LastEvaluatedKey')
+                if not last_evaluated_key:
+                    break
             
             return matches
             
@@ -241,34 +454,248 @@ class DynamoDBService:
             logger.error(f"Error getting matches for event {event_code}: {str(e)}")
             return []
     
-    async def get_matches_by_team(self, team_number: int, season: int) -> List[Dict[str, Any]]:
-        """Get matches for a specific team"""
+    def get_match_by_event_and_number(self, event_code: str, match_number: int) -> Optional[Dict[str, Any]]:
+        """Get a specific match by event code and match number using EventMatchNumberIndex"""
         try:
+            composite_key = f"{event_code}-{match_number}"
+            
             response = self.matches_table.query(
-                IndexName='TeamIndex',
-                KeyConditionExpression=Key('teamNumber').eq(team_number) & Key('season').eq(season)
+                IndexName='EventMatchNumberIndex',
+                KeyConditionExpression=Key('eventCode_matchNumber').eq(composite_key),
+                Limit=1
             )
             
-            matches = []
-            for item in response.get('Items', []):
-                match = self.convert_from_dynamodb_item(item)
-                # Verify team is actually in the match
-                if team_number in match.get('allTeams', []):
-                    matches.append(match)
-            
-            return matches
+            if response.get('Items'):
+                return self.convert_from_dynamodb_item(response['Items'][0])
+            return None
             
         except ClientError as e:
-            logger.error(f"Error getting matches for team {team_number}: {str(e)}")
+            logger.error(f"Error getting match {match_number} for event {event_code}: {str(e)}")
+            return None
+    
+    def get_matches_by_season(self, season: int, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Get matches for a season using SeasonIndex"""
+        try:
+            matches = []
+            last_evaluated_key = None
+            
+            while True:
+                query_kwargs = {
+                    'IndexName': 'SeasonIndex',
+                    'KeyConditionExpression': Key('season').eq(season)
+                }
+                
+                if limit is not None:
+                    query_kwargs['Limit'] = limit
+                
+                if last_evaluated_key:
+                    query_kwargs['ExclusiveStartKey'] = last_evaluated_key
+                
+                response = self.matches_table.query(**query_kwargs)
+                
+                for item in response.get('Items', []):
+                    matches.append(self.convert_from_dynamodb_item(item))
+                
+                last_evaluated_key = response.get('LastEvaluatedKey')
+                if not last_evaluated_key or (limit and len(matches) >= limit):
+                    break
+            
+            return matches[:limit] if limit else matches
+            
+        except ClientError as e:
+            logger.error(f"Error getting matches for season {season}: {str(e)}")
             return []
     
-    # EPA operations
-    async def get_latest_epa(self, team_number: int) -> Optional[Dict[str, Any]]:
-        """Get the latest EPA calculation for a team"""
+    def save_match(self, match_data: Dict[str, Any]) -> bool:
+        """Save a match to DynamoDB"""
         try:
-            response = self.epa_table.query(
+            # Ensure eventCode is not empty
+            if 'eventCode' not in match_data or not match_data['eventCode']:
+                match_data['eventCode'] = 'UNKNOWN'
+            
+            # Create composite key for EventMatchNumberIndex
+            if 'matchNumber' in match_data:
+                match_data['eventCode_matchNumber'] = f"{match_data['eventCode']}-{match_data['matchNumber']}"
+            
+            dynamodb_item = self.convert_to_dynamodb_item(match_data)
+            self.matches_table.put_item(Item=dynamodb_item)
+            return True
+        except ClientError as e:
+            logger.error(f"Error saving match {match_data.get('matchId')}: {str(e)}")
+            return False
+    
+    def batch_save_matches(self, matches: List[Dict[str, Any]]) -> bool:
+        """Save multiple matches efficiently"""
+        try:
+            with self.matches_table.batch_writer() as batch:
+                for match in matches:
+                    # Ensure eventCode is not empty
+                    if 'eventCode' not in match or not match['eventCode']:
+                        match['eventCode'] = 'UNKNOWN'
+                    
+                    # Create composite key for EventMatchNumberIndex
+                    if 'matchNumber' in match:
+                        match['eventCode_matchNumber'] = f"{match['eventCode']}-{match['matchNumber']}"
+                    
+                    dynamodb_item = self.convert_to_dynamodb_item(match)
+                    batch.put_item(Item=dynamodb_item)
+            return True
+        except ClientError as e:
+            logger.error(f"Error batch saving matches: {str(e)}")
+            return False
+    
+    # ========================================================================
+    # TEAM MATCH EPA OPERATIONS (NEW - Updated for new schema)
+    # ========================================================================
+    
+    def get_team_match_epa(self, team_number: int, match_id: str) -> Optional[Dict[str, Any]]:
+        """Get EPA for a specific team in a specific match"""
+        try:
+            composite_key = f"{team_number}-{match_id}"
+            
+            response = self.team_match_epa_table.get_item(
+                Key={'teamNumber_matchId': composite_key}
+            )
+            
+            if 'Item' in response:
+                return self.convert_from_dynamodb_item(response['Item'])
+            return None
+            
+        except ClientError as e:
+            logger.error(f"Error getting EPA for team {team_number}, match {match_id}: {str(e)}")
+            return None
+    
+    def get_team_season_epa(self, team_number: int, season: int) -> List[Dict[str, Any]]:
+        """Get all EPA records for a team in a season using TeamSeasonIndex"""
+        try:
+            epa_records = []
+            last_evaluated_key = None
+            
+            while True:
+                query_kwargs = {
+                    'IndexName': 'TeamSeasonIndex',
+                    'KeyConditionExpression': Key('teamNumber').eq(team_number) & Key('season').eq(season)
+                }
+                
+                if last_evaluated_key:
+                    query_kwargs['ExclusiveStartKey'] = last_evaluated_key
+                
+                response = self.team_match_epa_table.query(**query_kwargs)
+                
+                for item in response.get('Items', []):
+                    epa_records.append(self.convert_from_dynamodb_item(item))
+                
+                last_evaluated_key = response.get('LastEvaluatedKey')
+                if not last_evaluated_key:
+                    break
+            
+            return epa_records
+            
+        except ClientError as e:
+            logger.error(f"Error getting EPA for team {team_number}, season {season}: {str(e)}")
+            return []
+    
+    def get_team_event_epa(self, team_number: int, event_code: str) -> List[Dict[str, Any]]:
+        """Get all EPA records for a team at an event using TeamEventIndex"""
+        try:
+            epa_records = []
+            last_evaluated_key = None
+            
+            while True:
+                query_kwargs = {
+                    'IndexName': 'TeamEventIndex',
+                    'KeyConditionExpression': Key('teamNumber').eq(team_number) & Key('eventCode').eq(event_code)
+                }
+                
+                if last_evaluated_key:
+                    query_kwargs['ExclusiveStartKey'] = last_evaluated_key
+                
+                response = self.team_match_epa_table.query(**query_kwargs)
+                
+                for item in response.get('Items', []):
+                    epa_records.append(self.convert_from_dynamodb_item(item))
+                
+                last_evaluated_key = response.get('LastEvaluatedKey')
+                if not last_evaluated_key:
+                    break
+            
+            return epa_records
+            
+        except ClientError as e:
+            logger.error(f"Error getting EPA for team {team_number}, event {event_code}: {str(e)}")
+            return []
+    
+    def get_match_team_epas(self, event_code: str, match_id: str) -> List[Dict[str, Any]]:
+        """Get EPA records for all teams in a match using EventMatchIndex"""
+        try:
+            epa_records = []
+            last_evaluated_key = None
+            
+            while True:
+                query_kwargs = {
+                    'IndexName': 'EventMatchIndex',
+                    'KeyConditionExpression': Key('eventCode').eq(event_code) & Key('matchId').eq(match_id)
+                }
+                
+                if last_evaluated_key:
+                    query_kwargs['ExclusiveStartKey'] = last_evaluated_key
+                
+                response = self.team_match_epa_table.query(**query_kwargs)
+                
+                for item in response.get('Items', []):
+                    epa_records.append(self.convert_from_dynamodb_item(item))
+                
+                last_evaluated_key = response.get('LastEvaluatedKey')
+                if not last_evaluated_key:
+                    break
+            
+            return epa_records
+            
+        except ClientError as e:
+            logger.error(f"Error getting EPA for match {match_id}, event {event_code}: {str(e)}")
+            return []
+    
+    def get_team_epa_chronological(self, team_number: int, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Get team's EPA records in chronological order using TeamSeasonTimeIndex"""
+        try:
+            epa_records = []
+            last_evaluated_key = None
+            
+            while True:
+                query_kwargs = {
+                    'IndexName': 'TeamSeasonTimeIndex',
+                    'KeyConditionExpression': Key('teamNumber').eq(team_number),
+                    'ScanIndexForward': True  # Ascending order by time
+                }
+                
+                if limit is not None:
+                    query_kwargs['Limit'] = limit
+                
+                if last_evaluated_key:
+                    query_kwargs['ExclusiveStartKey'] = last_evaluated_key
+                
+                response = self.team_match_epa_table.query(**query_kwargs)
+                
+                for item in response.get('Items', []):
+                    epa_records.append(self.convert_from_dynamodb_item(item))
+                
+                last_evaluated_key = response.get('LastEvaluatedKey')
+                if not last_evaluated_key or (limit and len(epa_records) >= limit):
+                    break
+            
+            return epa_records[:limit] if limit else epa_records
+            
+        except ClientError as e:
+            logger.error(f"Error getting chronological EPA for team {team_number}: {str(e)}")
+            return []
+    
+    def get_latest_team_epa(self, team_number: int) -> Optional[Dict[str, Any]]:
+        """Get the most recent EPA record for a team"""
+        try:
+            response = self.team_match_epa_table.query(
+                IndexName='TeamSeasonTimeIndex',
                 KeyConditionExpression=Key('teamNumber').eq(team_number),
-                ScanIndexForward=False,  # Sort by calculationDate descending
+                ScanIndexForward=False,  # Descending order by time
                 Limit=1
             )
             
@@ -280,59 +707,62 @@ class DynamoDBService:
             logger.error(f"Error getting latest EPA for team {team_number}: {str(e)}")
             return None
     
-    async def get_historical_epa(self, team_number: int, limit: int = 10) -> List[Dict[str, Any]]:
-        """Get historical EPA calculations for a team"""
+    def save_team_match_epa(self, epa_data: Dict[str, Any]) -> bool:
+        """Save EPA calculation for a team in a match"""
         try:
-            response = self.epa_table.query(
-                KeyConditionExpression=Key('teamNumber').eq(team_number),
-                ScanIndexForward=False,  # Sort by calculationDate descending
-                Limit=limit
-            )
+            # Ensure required fields
+            if 'teamNumber' not in epa_data or 'matchId' not in epa_data:
+                logger.error("teamNumber and matchId are required for EPA records")
+                return False
             
-            epa_history = []
-            for item in response.get('Items', []):
-                epa_history.append(self.convert_from_dynamodb_item(item))
+            # Create composite primary key
+            epa_data['teamNumber_matchId'] = f"{epa_data['teamNumber']}-{epa_data['matchId']}"
             
-            return epa_history
+            # Ensure GSI fields have defaults
+            if 'eventCode' not in epa_data or not epa_data['eventCode']:
+                epa_data['eventCode'] = 'UNKNOWN'
+            if 'actualStartTime' not in epa_data or not epa_data['actualStartTime']:
+                epa_data['actualStartTime'] = '1970-01-01T00:00:00'
             
-        except ClientError as e:
-            logger.error(f"Error getting historical EPA for team {team_number}: {str(e)}")
-            return []
-    
-    async def save_epa_calculation(self, team_number: int, epa_data: Dict[str, Any]) -> bool:
-        """Save EPA calculation for a team"""
-        try:
-            # Set the latest flag for this team to False for existing records
-            existing_epas = await self.get_historical_epa(team_number, limit=50)
-            
-            # Update existing records to not be latest
-            for epa in existing_epas:
-                if epa.get('isLatest', False):
-                    update_item = {
-                        'teamNumber': team_number,
-                        'calculationDate': epa['calculationDate'],
-                        'isLatest': False
-                    }
-                    self.epa_table.put_item(Item=self.convert_to_dynamodb_item(update_item))
-            
-            # Add new EPA calculation
-            epa_item = {
-                'teamNumber': team_number,
-                'calculationDate': datetime.now(timezone.utc).strftime('%Y-%m-%d'),
-                'isLatest': True,
-                'calculatedAt': datetime.now(timezone.utc).isoformat(),
-                **epa_data
-            }
-            
-            self.epa_table.put_item(Item=self.convert_to_dynamodb_item(epa_item))
+            dynamodb_item = self.convert_to_dynamodb_item(epa_data)
+            self.team_match_epa_table.put_item(Item=dynamodb_item)
             return True
             
         except ClientError as e:
-            logger.error(f"Error saving EPA calculation for team {team_number}: {str(e)}")
+            logger.error(f"Error saving EPA for team {epa_data.get('teamNumber')}: {str(e)}")
             return False
     
-    # Cache operations for EPA calculations
-    async def get_cache(self, key: str) -> Optional[Any]:
+    def batch_save_team_match_epas(self, epa_records: List[Dict[str, Any]]) -> bool:
+        """Save multiple EPA records efficiently"""
+        try:
+            with self.team_match_epa_table.batch_writer() as batch:
+                for epa_data in epa_records:
+                    # Ensure required fields
+                    if 'teamNumber' not in epa_data or 'matchId' not in epa_data:
+                        logger.warning("Skipping EPA record without teamNumber or matchId")
+                        continue
+                    
+                    # Create composite primary key
+                    epa_data['teamNumber_matchId'] = f"{epa_data['teamNumber']}-{epa_data['matchId']}"
+                    
+                    # Ensure GSI fields have defaults
+                    if 'eventCode' not in epa_data or not epa_data['eventCode']:
+                        epa_data['eventCode'] = 'UNKNOWN'
+                    if 'actualStartTime' not in epa_data or not epa_data['actualStartTime']:
+                        epa_data['actualStartTime'] = '1970-01-01T00:00:00'
+                    
+                    dynamodb_item = self.convert_to_dynamodb_item(epa_data)
+                    batch.put_item(Item=dynamodb_item)
+            return True
+        except ClientError as e:
+            logger.error(f"Error batch saving EPA records: {str(e)}")
+            return False
+    
+    # ========================================================================
+    # CACHE OPERATIONS
+    # ========================================================================
+    
+    def get_cache(self, key: str) -> Optional[Any]:
         """Get value from cache if it exists and hasn't expired"""
         try:
             if key not in self._cache:
@@ -354,7 +784,7 @@ class DynamoDBService:
             logger.warning(f"Error getting cache for key {key}: {e}")
             return None
     
-    async def set_cache(self, key: str, value: Any, ttl_seconds: int = 3600) -> bool:
+    def set_cache(self, key: str, value: Any, ttl_seconds: int = 3600) -> bool:
         """Set value in cache with TTL (default 1 hour)"""
         try:
             expires_at = time.time() + ttl_seconds
@@ -367,7 +797,7 @@ class DynamoDBService:
             
             # Clean up expired entries periodically (every 100 cache sets)
             if len(self._cache) % 100 == 0:
-                await self._cleanup_expired_cache()
+                self._cleanup_expired_cache()
             
             logger.debug(f"Cache set for key: {key}, TTL: {ttl_seconds}s")
             return True
@@ -376,7 +806,7 @@ class DynamoDBService:
             logger.warning(f"Error setting cache for key {key}: {e}")
             return False
     
-    async def _cleanup_expired_cache(self):
+    def _cleanup_expired_cache(self):
         """Remove expired cache entries"""
         try:
             current_time = time.time()
@@ -413,58 +843,78 @@ class DynamoDBService:
             'expired_entries': expired_entries
         }
     
-    # Batch operations
-    async def batch_get_team_epas(self, team_numbers: List[int]) -> Dict[str, float]:
-        """Get EPAs for multiple teams"""
+    # ========================================================================
+    # BATCH OPERATIONS
+    # ========================================================================
+    
+    def batch_get_team_epas(self, team_numbers: List[int], season: Optional[int] = None) -> Dict[str, float]:
+        """Get latest EPA for multiple teams"""
         team_epas = {}
         
         for team_number in team_numbers:
-            epa_data = await self.get_latest_epa(team_number)
-            if epa_data:
-                team_epas[str(team_number)] = epa_data.get('historicalEPA', 0.0)
+            if season:
+                # Get average EPA for the season
+                epa_records = self.get_team_season_epa(team_number, season)
+                if epa_records:
+                    avg_epa = sum(r.get('averageEPA', 0) for r in epa_records) / len(epa_records)
+                    team_epas[str(team_number)] = avg_epa
+                else:
+                    team_epas[str(team_number)] = 0.0
             else:
-                team_epas[str(team_number)] = 0.0
+                # Get latest EPA
+                latest_epa = self.get_latest_team_epa(team_number)
+                if latest_epa:
+                    team_epas[str(team_number)] = latest_epa.get('averageEPA', 0.0)
+                else:
+                    team_epas[str(team_number)] = 0.0
         
         return team_epas
     
-    def batch_save_matches(self, matches: List[Dict[str, Any]]) -> bool:
-        """Save multiple matches efficiently (expects DynamoDB items)"""
-        try:
-            with self.matches_table.batch_writer() as batch:
-                for match in matches:
-                    # Assumes match is already a DynamoDB item
-                    batch.put_item(Item=match)
-            
-            return True
-            
-        except ClientError as e:
-            logger.error(f"Error batch saving matches: {str(e)}")
-            return False
+    # ========================================================================
+    # LEGACY COMPATIBILITY (For backward compatibility with old code)
+    # ========================================================================
     
-    def batch_save_teams(self, teams: List[Dict[str, Any]]) -> bool:
-        """Save multiple teams efficiently"""
-        try:
-            with self.teams_table.batch_writer() as batch:
-                for team in teams:
-                    dynamodb_item = self.convert_to_dynamodb_item(team)
-                    batch.put_item(Item=dynamodb_item)
-            
-            return True
-            
-        except ClientError as e:
-            logger.error(f"Error batch saving teams: {str(e)}")
-            return False
+    def get_latest_epa(self, team_number: int) -> Optional[Dict[str, Any]]:
+        """Legacy method - redirects to get_latest_team_epa"""
+        return self.get_latest_team_epa(team_number)
     
-    def batch_save_events(self, events: List[Dict[str, Any]]) -> bool:
-        """Save multiple events efficiently"""
-        try:
-            with self.events_table.batch_writer() as batch:
-                for event in events:
-                    dynamodb_item = self.convert_to_dynamodb_item(event)
-                    batch.put_item(Item=dynamodb_item)
-            
-            return True
-            
-        except ClientError as e:
-            logger.error(f"Error batch saving events: {str(e)}")
-            return False 
+    def get_matches_by_team(self, team_number: int, season: int) -> List[Dict[str, Any]]:
+        """Legacy method - get matches for a team (uses EPA table now)"""
+        epa_records = self.get_team_season_epa(team_number, season)
+        # Extract unique matches from EPA records
+        matches = []
+        seen_match_ids = set()
+        
+        for epa_record in epa_records:
+            match_id = epa_record.get('matchId')
+            if match_id and match_id not in seen_match_ids:
+                seen_match_ids.add(match_id)
+                # Get full match details
+                match = self.get_match(match_id)
+                if match:
+                    matches.append(match)
+        
+        return matches
+    
+    def get_teams_by_event(self, season: int, event_code: str) -> List[Dict[str, Any]]:
+        """Legacy method - get teams that participated in an event"""
+        # Get all matches for the event
+        matches = self.get_matches_by_event(event_code, season)
+        
+        # Extract unique team numbers
+        team_numbers = set()
+        for match in matches:
+            if 'teamNumbers' in match:
+                # Convert to int to handle both Decimal and float types
+                team_numbers.update(int(tn) for tn in match['teamNumbers'])
+        
+        # Get team details
+        teams = []
+        for team_number in team_numbers:
+            # Ensure team_number is an integer
+            team = self.get_team(int(team_number), season)
+            if team:
+                teams.append(team)
+        
+        return teams
+

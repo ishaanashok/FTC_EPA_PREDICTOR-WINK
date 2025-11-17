@@ -3,6 +3,7 @@ import logging
 import os
 from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime, timezone
+from decimal import Decimal
 import itertools
 
 # AWS SDK
@@ -11,6 +12,14 @@ from botocore.exceptions import ClientError
 
 # Local imports
 from services.dynamodb_service import DynamoDBService
+
+# Custom JSON encoder for Decimal types
+class DecimalEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, Decimal):
+            return float(obj)
+        return super(DecimalEncoder, self).default(obj)
+
 
 # Configure logging
 logging.basicConfig(
@@ -587,7 +596,7 @@ async def lambda_handler(event, context):
                 'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token',
                 'Access-Control-Allow-Methods': 'GET,POST,OPTIONS'
             },
-            'body': json.dumps(result)
+            'body': json.dumps(result, cls=DecimalEncoder)
         }
         
     except Exception as e:

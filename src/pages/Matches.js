@@ -32,7 +32,7 @@ function Matches() {
   const [selectedEvent, setSelectedEvent] = useState('');
   const [events, setEvents] = useState([]);
   const [tournamentLevel, setTournamentLevel] = useState(''); // 'QUALIFICATION', 'PLAYOFF', or '' for all
-  const [selectedSeason, setSelectedSeason] = useState(2024);
+  const [selectedSeason, setSelectedSeason] = useState(2025);
   const [matchStats, setMatchStats] = useState(null);
   const [teamEPAs, setTeamEPAs] = useState({});
   const [epaLoading, setEpaLoading] = useState(false);
@@ -354,6 +354,7 @@ function Matches() {
               onChange={handleSeasonChange}
               label="Season"
             >
+              <MenuItem value={2025}>2025</MenuItem>
               <MenuItem value={2024}>2024</MenuItem>
               <MenuItem value={2023}>2023</MenuItem>
               <MenuItem value={2022}>2022</MenuItem>

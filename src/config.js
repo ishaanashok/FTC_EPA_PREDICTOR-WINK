@@ -1,8 +1,8 @@
 export const config = {
   // FTC API Configuration
   useAWSAPI: true,
-  apiBaseUrl: 'https://emgquhzu1f.execute-api.us-east-1.amazonaws.com/stage',
-  currentSeason: 2024,
+  apiBaseUrl: 'https://irm64hxrp4.execute-api.us-east-1.amazonaws.com/stage',
+  currentSeason: 2025,
   
   // AWS Cognito Configuration
   cognito: {

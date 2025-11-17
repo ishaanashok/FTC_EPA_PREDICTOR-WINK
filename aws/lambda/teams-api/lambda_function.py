@@ -3,6 +3,7 @@ import logging
 import os
 from typing import Dict, List, Any, Optional
 from datetime import datetime, timezone
+from decimal import Decimal
 
 # AWS SDK
 import boto3
@@ -10,6 +11,13 @@ from botocore.exceptions import ClientError
 
 # Local imports
 from services.dynamodb_service import DynamoDBService
+
+# Custom JSON encoder for Decimal types
+class DecimalEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, Decimal):
+            return float(obj)
+        return super(DecimalEncoder, self).default(obj)
 
 # Configure logging
 logging.basicConfig(
@@ -48,7 +56,15 @@ class TeamsApiService:
             
             elif event_code:
                 # Get teams for specific event
-                teams = self.db_service.get_teams_by_event(season, event_code)
+                try:
+                    teams = self.db_service.get_teams_by_event(season, event_code)
+                except Exception as e:
+                    logger.error(f"Error getting teams for event {event_code}: {str(e)}")
+                    logger.error(f"Exception type: {type(e).__name__}")
+                    import traceback
+                    logger.error(f"Traceback: {traceback.format_exc()}")
+                    teams = []
+                
                 return {
                     "success": True,
                     "teams": teams,
@@ -78,7 +94,7 @@ class TeamsApiService:
     def get_team_details(self, team_number: int, season: int) -> Dict[str, Any]:
         """Get detailed information about a specific team"""
         try:
-            # Get team basic info
+            # Get team basic info (now includes historicEPA embedded)
             team = self.db_service.get_team(team_number, season)
             
             if not team:
@@ -88,17 +104,32 @@ class TeamsApiService:
                     "team": None
                 }
             
-            # Get team's matches
+            # Get team's matches (optional - can be heavy)
             matches = self.db_service.get_matches_by_team(team_number, season)
             
-            # Get team's EPA if available
-            epa_data = self.db_service.get_latest_epa(team_number)
+            # Extract historic EPA from team data (NEW - embedded in team record)
+            historic_epa = team.get('historicEPA')
+            
+            # Get per-match EPA for this season (optional - for detailed analysis)
+            season_epa_records = self.db_service.get_team_season_epa(team_number, season)
+            
+            # Calculate current season EPA summary from per-match records
+            current_season_epa = None
+            if season_epa_records:
+                latest_record = season_epa_records[-1]  # Last match has latest averageEPA
+                current_season_epa = {
+                    "averageEPA": latest_record.get('averageEPA'),
+                    "matchCount": latest_record.get('matchCount'),
+                    "latestMatchEPA": latest_record.get('matchEPA'),
+                    "cumulativeEPA": latest_record.get('cumulativeEPA')
+                }
             
             return {
                 "success": True,
                 "team": team,
                 "matches": matches,
-                "epa": epa_data,
+                "historicEPA": historic_epa,  # Pre-calculated weighted EPA across seasons
+                "currentSeasonEPA": current_season_epa,  # Latest EPA for current season
                 "totalMatches": len(matches)
             }
             
@@ -161,7 +192,7 @@ def lambda_handler(event, context):
                 'body': json.dumps({
                     'error': 'Method not allowed',
                     'allowedMethods': ['GET']
-                })
+                }, cls=DecimalEncoder)
             }
         
         return {
@@ -170,7 +201,7 @@ def lambda_handler(event, context):
                 'Content-Type': 'application/json',
                 'Access-Control-Allow-Origin': '*'
             },
-            'body': json.dumps(result)
+            'body': json.dumps(result, cls=DecimalEncoder)
         }
         
     except Exception as e:
@@ -184,7 +215,7 @@ def lambda_handler(event, context):
             'body': json.dumps({
                 'error': str(e),
                 'success': False
-            })
+            }, cls=DecimalEncoder)
         }
 
 

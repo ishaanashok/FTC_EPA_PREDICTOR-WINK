@@ -193,7 +193,7 @@ const EventDetails = () => {
               <Typography>Date: {eventDetails?.events[0]?.dateStart}</Typography>
               <Typography>Location: {eventDetails?.events[0]?.venue}</Typography>
               <Typography>City: {eventDetails?.events[0]?.city}</Typography>
-              <Typography>State: {eventDetails?.events[0]?.stateProv}</Typography>
+              <Typography>State: {eventDetails?.events[0]?.stateprov || eventDetails?.events[0]?.stateProv}</Typography>
               <Typography><a href="https://ftc-events.firstinspires.org/services/API">✓ Data Verified by FIRST</a></Typography>
             </Grid>
             
@@ -215,8 +215,8 @@ const EventDetails = () => {
                       <TableRow key={team.teamNumber} hover>
                         <TableCell>{team.teamNumber}</TableCell>
                         <TableCell>{team.teamName || team.nameShort || team.nameFull}</TableCell>
-                        <TableCell>{team.schoolName}</TableCell>
-                        <TableCell>{`${team.city}, ${team.stateProv || team.state}`}</TableCell>
+                        <TableCell>{team.nameFull || team.schoolName}</TableCell>
+                        <TableCell>{`${team.city}, ${team.stateprov || team.stateProv || team.state}`}</TableCell>
                         <TableCell>{teamEPAs[`${team.teamNumber}.0`]?.toFixed(1) || teamEPAs[team.teamNumber.toString()]?.toFixed(1) || teamEPAs[team.teamNumber]?.toFixed(1) || '0.0'}</TableCell>
                       </TableRow>
                     ))}
@@ -315,6 +315,7 @@ const EventDetails = () => {
             eventCode={eventCode}
             teams={teams}
             teamEPAs={teamEPAs}
+            matches={matches}
           />
         ) : activeTab === 3 && isAdmin ? (
           <AddMatches

@@ -170,7 +170,28 @@ Resources:
         - Key: Application
           Value: FTC-Predictor
 
-  # Cache table removed - no longer using caching layer
+  FTCSyncStatusTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub 'FTC_SyncStatus_${Environment}'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: syncKey
+          AttributeType: S
+        - AttributeName: lastSyncTime
+          AttributeType: S
+      KeySchema:
+        - AttributeName: syncKey
+          KeyType: HASH
+        - AttributeName: lastSyncTime
+          KeyType: RANGE
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: FTC-Predictor
 
   # IAM Role for Lambda Functions
   LambdaExecutionRole:
@@ -206,10 +227,12 @@ Resources:
                   - !GetAtt FTCEventsTable.Arn
                   - !GetAtt FTCMatchesTable.Arn
                   - !GetAtt FTCEPATable.Arn
+                  - !GetAtt FTCSyncStatusTable.Arn
                   - !Sub '${FTCTeamsTable.Arn}/index/*'
                   - !Sub '${FTCEventsTable.Arn}/index/*'
                   - !Sub '${FTCMatchesTable.Arn}/index/*'
                   - !Sub '${FTCEPATable.Arn}/index/*'
+                  - !Sub '${FTCSyncStatusTable.Arn}/index/*'
         - PolicyName: SecretsManagerAccess
           PolicyDocument:
             Version: '2012-10-17'
@@ -281,6 +304,7 @@ Resources:
           EVENTS_TABLE: !Ref FTCEventsTable
           MATCHES_TABLE: !Ref FTCMatchesTable
           EPA_TABLE: !Ref FTCEPATable
+          SYNC_STATUS_TABLE: !Ref FTCSyncStatusTable
           SECRETS_NAME: !Ref FTCApiCredentials
       Tags:
         - Key: Environment
@@ -384,6 +408,85 @@ Resources:
           ENVIRONMENT: !Ref Environment
           EPA_TABLE: !Ref FTCEPATable
           MATCHES_TABLE: !Ref FTCMatchesTable
+
+  # New Separate Sync Lambda Functions
+  TeamsSyncLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'ftc-teams-sync-${Environment}'
+      Runtime: python3.11
+      Handler: lambda_function.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        S3Bucket: !If [CreateNewBucket, !Ref LambdaDeploymentBucket, !Ref ExistingLambdaDeploymentBucket]
+        S3Key: functions/teams-sync.zip
+      Layers:
+        - !Ref CommonDependenciesLayer
+      Timeout: 900
+      MemorySize: 1024
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          TEAMS_TABLE: !Ref FTCTeamsTable
+          SYNC_STATUS_TABLE: !Ref FTCSyncStatusTable
+          SECRETS_NAME: !Ref FTCApiCredentials
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: FTC-Predictor
+
+  EventsSyncLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'ftc-events-sync-${Environment}'
+      Runtime: python3.11
+      Handler: lambda_function.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        S3Bucket: !If [CreateNewBucket, !Ref LambdaDeploymentBucket, !Ref ExistingLambdaDeploymentBucket]
+        S3Key: functions/events-sync.zip
+      Layers:
+        - !Ref CommonDependenciesLayer
+      Timeout: 900
+      MemorySize: 1024
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          EVENTS_TABLE: !Ref FTCEventsTable
+          SYNC_STATUS_TABLE: !Ref FTCSyncStatusTable
+          SECRETS_NAME: !Ref FTCApiCredentials
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: FTC-Predictor
+
+  MatchesSyncLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'ftc-matches-sync-${Environment}'
+      Runtime: python3.11
+      Handler: lambda_function.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        S3Bucket: !If [CreateNewBucket, !Ref LambdaDeploymentBucket, !Ref ExistingLambdaDeploymentBucket]
+        S3Key: functions/matches-sync.zip
+      Layers:
+        - !Ref CommonDependenciesLayer
+      Timeout: 900
+      MemorySize: 1024
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          MATCHES_TABLE: !Ref FTCMatchesTable
+          SYNC_STATUS_TABLE: !Ref FTCSyncStatusTable
+          SECRETS_NAME: !Ref FTCApiCredentials
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: FTC-Predictor
 
   # EventBridge Rule for Data Sync (every 6 hours)
   DataSyncScheduleRule:
@@ -790,6 +893,7 @@ Outputs:
       Events: ${FTCEventsTable}
       Matches: ${FTCMatchesTable}
       EPA: ${FTCEPATable}
+      SyncStatus: ${FTCSyncStatusTable}
 
   LambdaDeploymentBucket:
     Description: S3 bucket used for Lambda deployment packages
@@ -805,4 +909,7 @@ Outputs:
       EventsApi: ${EventsApiLambda.Arn}
       MatchesApi: ${MatchesApiLambda.Arn}
       EPAApi: ${EPAApiLambda.Arn}
-      AllianceMatchmaker: ${AllianceMatchmakerLambda.Arn} 
+      AllianceMatchmaker: ${AllianceMatchmakerLambda.Arn}
+      TeamsSync: ${TeamsSyncLambda.Arn}
+      EventsSync: ${EventsSyncLambda.Arn}
+      MatchesSync: ${MatchesSyncLambda.Arn} 

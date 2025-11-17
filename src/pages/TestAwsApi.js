@@ -20,7 +20,7 @@ function TestAwsApi() {
   const [error, setError] = useState(null);
   const [eventCode, setEventCode] = useState('USLAWAQ');
   const [teamNumber, setTeamNumber] = useState('19458');
-  const [season, setSeason] = useState('2024');
+  const [season, setSeason] = useState('2025');
 
   const testConnection = async () => {
     setLoading(true);

@@ -1,0 +1,23 @@
+# Ignore copied shared services (synced during deployment)
+*/services/dynamodb_service.py
+
+# Ignore deployment artifacts
+*/function.zip
+*/*.zip
+
+# Ignore backup and temporary files
+*.backup.*
+*_backup_*.py
+*_updated.py
+
+# Ignore Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Ignore deployment packages
+*/deployment-package/
+*/temp-deploy/
+

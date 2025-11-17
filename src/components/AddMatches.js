@@ -40,7 +40,7 @@ const AddMatches = ({ season, eventCode, teams, onMatchesAdded }) => {
       setLoadingMatches(true);
       setError(null);
       
-      const result = await ftcApi.getEventMatches(season, eventCode);
+      const result = await ftcApi.getAdminEventMatches(season, eventCode);
       
       if (result.success && result.matches) {
         // Convert DynamoDB matches to form format

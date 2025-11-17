@@ -60,16 +60,41 @@
     padding: 15px;
     margin: 10px 0;
     box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    transition: all 0.3s ease;
+}
+
+.event-card.clickable {
+    cursor: pointer;
+}
+
+.event-card.clickable:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+    border-color: #007bff;
 }
 
 .event-card h3 {
     color: #007bff;
     margin-bottom: 10px;
+    font-size: 1.2em;
+}
+
+.event-card.clickable:hover h3 {
+    color: #0056b3;
 }
 
 .event-card p {
     margin: 5px 0;
     color: #6c757d;
+}
+
+.event-card .event-code {
+    color: #495057;
+    font-family: monospace;
+    background: #f8f9fa;
+    padding: 2px 6px;
+    border-radius: 3px;
+    display: inline-block;
 }
 
 /* Team Header Improvements */

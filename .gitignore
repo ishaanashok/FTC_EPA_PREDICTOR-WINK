@@ -44,3 +44,26 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 node_modules
+
+# Environment variables and secrets
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+.env.*
+!.env.example
+
+# Python cache and logs
+__pycache__/
+*.py[cod]
+*$py.class
+*.log
+fetch_teams.log
+fetch_events.log
+
+# Local data files
+teams_*.json
+events_*.json
+matches_*.json
+team_match_epa_*.json

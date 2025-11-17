@@ -36,7 +36,7 @@ function Events() {
       setLoading(true);
       setError(null);
       
-      const season = 2024;
+      const season = 2025;
       
       // Try the AWS FTC API service first
       console.log('Trying to fetch events from AWS...');
@@ -66,7 +66,7 @@ function Events() {
         setEvents(events);
         
         if (events.length === 0) {
-          setError('No events found for season 2024');
+          setError('No events found for season 2025');
         } else {
           console.log('Successfully loaded', events.length, 'events');
         }
@@ -115,7 +115,7 @@ function Events() {
         setLoading(true);
         setError(null);
         
-        const season = 2024;
+        const season = 2025;
         const response = await ftcApi.getEvents(season);
         
         if (mounted) {
@@ -171,14 +171,14 @@ function Events() {
 
   const filteredEvents = events.filter(event => {
     // Exclude Workshop and Scrimmage events
-    if (event.eventType === 'Workshop' || event.eventType === 'Scrimmage') {
+    if (event.typeName === 'Workshop' || event.typeName === 'Scrimmage') {
       return false;
     }
 
     const matchesSearch = 
-      (event.eventName?.toLowerCase() || '').includes(searchText.toLowerCase()) ||
+      (event.name?.toLowerCase() || '').includes(searchText.toLowerCase()) ||
       (event.city?.toLowerCase() || '').includes(searchText.toLowerCase()) ||
-      (event.state?.toLowerCase() || '').includes(searchText.toLowerCase());
+      (event.stateprov?.toLowerCase() || '').includes(searchText.toLowerCase());
     
     const status = getStatusLabel(event.dateStart, event.dateEnd).toLowerCase();
     const matchesFilter = filter === 'all' || status === filter.toLowerCase();
@@ -261,18 +261,18 @@ function Events() {
                   </Grid>
                 ) : (
                   filteredEvents.map((event) => (
-                    <Grid item xs={12} sm={6} md={4} key={`2024-${event.eventCode}`}>
+                    <Grid item xs={12} sm={6} md={4} key={`2025-${event.code}`}>
                       <Card sx={{ height: '100%' }}>
-                        <CardActionArea onClick={() => navigate(`/events/2024/${event.eventCode}`)}>
+                        <CardActionArea onClick={() => navigate(`/events/2025/${event.code}`)}>
                           <CardContent>
                             <Typography variant="h6" gutterBottom>
-                              {event.eventName}
+                              {event.name}
                             </Typography>
                             <Typography color="textSecondary" gutterBottom>
                               {new Date(event.dateStart).toLocaleDateString()} - {new Date(event.dateEnd).toLocaleDateString()}
                             </Typography>
                             <Typography gutterBottom>
-                              {event.city}, {event.state}
+                              {event.city}, {event.stateprov || event.stateProv}
                             </Typography>
                             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 2 }}>
                               <Chip
@@ -281,7 +281,7 @@ function Events() {
                                 size="small"
                               />
                               <Typography variant="body2" color="textSecondary">
-                                {event.eventType}
+                                {event.typeName}
                               </Typography>
                             </Box>
                           </CardContent>

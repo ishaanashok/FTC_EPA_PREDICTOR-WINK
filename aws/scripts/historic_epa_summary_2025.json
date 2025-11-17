@@ -1,0 +1,39 @@
+{
+  "targetSeason": 2025,
+  "historicalSeasons": [
+    2022,
+    2023,
+    2024
+  ],
+  "seasonWeights": {
+    "2024": 1.0,
+    "2023": 0.7,
+    "2022": 0.5
+  },
+  "teamsProcessed": 13916,
+  "teamsWithHistory": 9050,
+  "teamsWithoutHistory": 4866,
+  "percentageWithHistory": 65.03,
+  "historicEPAStatistics": {
+    "min": 0.9,
+    "max": 323.68,
+    "mean": 84.15,
+    "median": 77.28
+  },
+  "cumulativeEPAStatistics": {
+    "min": 4.5,
+    "max": 50586.48,
+    "mean": 3385.77
+  },
+  "seasonParticipation": {
+    "2022": 4943,
+    "2023": 6629,
+    "2024": 7577
+  },
+  "matchCountStatistics": {
+    "min": 0,
+    "max": 273,
+    "mean": 28.8
+  },
+  "calculatedAt": "2025-11-10T01:16:17.642113+00:00"
+}

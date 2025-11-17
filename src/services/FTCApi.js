@@ -2,10 +2,11 @@ import axios from 'axios';
 import { config } from '../config.js';
 import { fetchAuthSession } from 'aws-amplify/auth';
 
-const BASE_URL = config.apiBaseUrl;
+const BASE_URL = config.apiBaseUrl || 'https://irm64hxrp4.execute-api.us-east-1.amazonaws.com/stage';
 
 class FTCApi {
     constructor() {
+        console.log('FTCApi initialized with baseURL:', BASE_URL);
         this.axiosInstance = axios.create({
             baseURL: BASE_URL,
             headers: {
@@ -13,6 +14,7 @@ class FTCApi {
                 'Accept': 'application/json'
             }
         });
+        console.log('Axios instance created with baseURL:', this.axiosInstance.defaults.baseURL);
     }
 
     // Helper method to get authentication headers
@@ -289,7 +291,7 @@ class FTCApi {
     }
 
     async getHistoricalMatches(teamNumber) {
-        const seasons = [2020, 2021, 2022, 2023, 2024];
+        const seasons = [2020, 2021, 2022, 2023, 2024, 2025];
         const allMatches = {};
         
         for (const season of seasons) {
@@ -305,9 +307,105 @@ class FTCApi {
         return { matches: allMatches };
     }
 
-    // Get historical EPA for a specific team
+    // ========================================================================
+    // EPA API Methods (NEW - Schema v2.0)
+    // ========================================================================
+    
+    /**
+     * Get historic EPA for a team (embedded in team record)
+     * @param {number} teamNumber - Team number
+     * @param {number} season - Season year (default: 2025)
+     * @returns {Promise} Historic EPA data
+     */
+    async getTeamHistoricEPA(teamNumber, season = 2025) {
+        try {
+            const response = await this.axiosInstance.get(`/api/epa/${teamNumber}`, {
+                params: { season }
+            });
+            return response.data;
+        } catch (error) {
+            console.error(`Error getting historic EPA for team ${teamNumber}:`, error);
+            throw error;
+        }
+    }
+    
+    /**
+     * Get per-match EPA records for a team in a season
+     * @param {number} teamNumber - Team number
+     * @param {number} season - Season year
+     * @returns {Promise} Per-match EPA records and summary
+     */
+    async getTeamSeasonEPA(teamNumber, season) {
+        try {
+            const response = await this.axiosInstance.get(`/api/epa/${teamNumber}`, {
+                params: { type: 'season', season }
+            });
+            return response.data;
+        } catch (error) {
+            console.error(`Error getting season EPA for team ${teamNumber}:`, error);
+            throw error;
+        }
+    }
+    
+    /**
+     * Get EPA records for a team at a specific event
+     * @param {number} teamNumber - Team number
+     * @param {string} eventCode - Event code
+     * @returns {Promise} EPA records at event
+     */
+    async getTeamEventEPA(teamNumber, eventCode) {
+        try {
+            const response = await this.axiosInstance.get(`/api/epa/${teamNumber}`, {
+                params: { eventCode }
+            });
+            return response.data;
+        } catch (error) {
+            console.error(`Error getting event EPA for team ${teamNumber} at ${eventCode}:`, error);
+            throw error;
+        }
+    }
+    
+    /**
+     * Get EPA summary for all teams at an event
+     * @param {string} eventCode - Event code
+     * @param {number} season - Season year (default: 2025)
+     * @returns {Promise} EPA data for all teams at event
+     */
+    async getEventTeamEPAs(eventCode, season = 2025) {
+        try {
+            const response = await this.axiosInstance.get('/api/epa', {
+                params: { eventCode, season }
+            });
+            return response.data;
+        } catch (error) {
+            console.error(`Error getting event team EPAs for ${eventCode}:`, error);
+            throw error;
+        }
+    }
+    
+    /**
+     * Compare historic EPA between multiple teams
+     * @param {number[]} teamNumbers - Array of team numbers
+     * @param {number} season - Season year (default: 2025)
+     * @returns {Promise} Comparison data with statistics
+     */
+    async compareTeamEPAs(teamNumbers, season = 2025) {
+        try {
+            const teamsParam = teamNumbers.join(',');
+            const response = await this.axiosInstance.get('/api/epa', {
+                params: { teams: teamsParam, compare: 'true', season }
+            });
+            return response.data;
+        } catch (error) {
+            console.error('Error comparing team EPAs:', error);
+            throw error;
+        }
+    }
+    
+    // Legacy method - kept for backward compatibility
     async getHistoricalEPA(teamNumber) {
-        return this.request(`/api/epa/${teamNumber}`, { historical: 'true' });
+        // Redirect to new method
+        return this.getTeamHistoricEPA(teamNumber, 2025);
     }
 
     async getMatches(season, eventCode) {
@@ -378,14 +476,17 @@ class FTCApi {
             matches = [];
         }
         
-        // Get EPAs from EPA API
+        // Get EPAs from EPA API (NEW - uses getEventTeamEPAs)
         const teamEPAs = {};
         try {
-            const epaResponse = await this.axiosInstance.get(`/api/epa`, {
-                params: { season, eventCode }
-            });
-            if (epaResponse.data && epaResponse.data.success) {
-                Object.assign(teamEPAs, epaResponse.data.epas || {});
+            const epaResponse = await this.getEventTeamEPAs(eventCode, season);
+            if (epaResponse && epaResponse.success && epaResponse.teamEPAs) {
+                // Convert new EPA format to legacy format for compatibility
+                Object.keys(epaResponse.teamEPAs).forEach(teamNum => {
+                    const teamEPA = epaResponse.teamEPAs[teamNum];
+                    // Prefer eventEPA if available, otherwise use historicEPA
+                    teamEPAs[teamNum] = teamEPA.eventEPA || teamEPA.historicEPA || 50.0;
+                });
             }
         } catch (epaError) {
             console.warn('Failed to get EPAs, using defaults:', epaError);
@@ -395,11 +496,56 @@ class FTCApi {
             });
         }
         
-        console.log('Final result - Teams:', teams.length, 'Matches:', matches.length, 'EPAs:', Object.keys(teamEPAs).length);
+        // Calculate win probabilities for each match using EPAs
+        const matchesWithPredictions = matches.map(match => {
+            if (!match.teams || match.teams.length === 0) {
+                return match;
+            }
+            
+            // Get red and blue alliance teams
+            const redTeams = match.teams
+                .filter(t => t.station && t.station.includes('Red'))
+                .map(t => t.teamNumber);
+            const blueTeams = match.teams
+                .filter(t => t.station && t.station.includes('Blue'))
+                .map(t => t.teamNumber);
+            
+            // Calculate alliance EPAs
+            const redEPA = redTeams.reduce((sum, teamNum) => {
+                const epa = teamEPAs[teamNum.toString()] || teamEPAs[teamNum] || 50.0;
+                return sum + epa;
+            }, 0) / (redTeams.length || 1);
+            
+            const blueEPA = blueTeams.reduce((sum, teamNum) => {
+                const epa = teamEPAs[teamNum.toString()] || teamEPAs[teamNum] || 50.0;
+                return sum + epa;
+            }, 0) / (blueTeams.length || 1);
+            
+            // Calculate win probability using logistic function
+            // P(red wins) = 1 / (1 + exp(-(redEPA - blueEPA) / scale))
+            const epaDiff = redEPA - blueEPA;
+            const scale = 25.0; // Scaling factor for EPA differences
+            const redWinProb = 1 / (1 + Math.exp(-epaDiff / scale));
+            const blueWinProb = 1 - redWinProb;
+            
+            // Add win probability data to match
+            return {
+                ...match,
+                winProbability: {
+                    predictedWinner: redWinProb > 0.5 ? 'Red' : 'Blue',
+                    redWinProbability: redWinProb,
+                    blueWinProbability: blueWinProb,
+                    redAllianceEPA: redEPA,
+                    blueAllianceEPA: blueEPA
+                }
+            };
+        });
+        
+        console.log('Final result - Teams:', teams.length, 'Matches:', matchesWithPredictions.length, 'EPAs:', Object.keys(teamEPAs).length);
         
         // Log a sample match to see the win probability data
-        if (matches.length > 0) {
-            console.log('Sample match with win probability:', matches[0]);
+        if (matchesWithPredictions.length > 0) {
+            console.log('Sample match with win probability:', matchesWithPredictions[0]);
         }
         
         return {
@@ -408,7 +554,7 @@ class FTCApi {
             eventCode,
             season,
             teams: teams,
-            matches: matches, // These matches already contain winProbability data
+            matches: matchesWithPredictions, // Matches now contain calculated winProbability data
             predictions: [], // Legacy predictions not needed since winProbability is in matches
             teamEPAs: teamEPAs,
             teamCount: teams.length,
@@ -510,7 +656,7 @@ class FTCApi {
     }
 
     // Admin method to get existing matches for an event
-    async getEventMatches(season, eventCode) {
+    async getAdminEventMatches(season, eventCode) {
         try {
             const headers = await this.getAuthHeaders();
             

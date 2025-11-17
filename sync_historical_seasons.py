@@ -229,8 +229,6 @@ class HistoricalDataSync:
                     if not team_number:
                         continue
                     
-                    # Generate hash for this team's current data
-                    current_hash = self._generate_hash(team)
                     
                     transformed_team = {
                         'teamNumber': team_number,
@@ -320,8 +318,6 @@ class HistoricalDataSync:
                     if not event_code:
                         continue
                     
-                    # Generate hash for this event's current data
-                    current_hash = self._generate_hash(event)
                     
                     transformed_event = {
                         'eventCode': event_code,
@@ -493,11 +489,6 @@ class HistoricalDataSync:
         logger.info("Full data sync completed")
         return results
     
-    def _generate_hash(self, data: Dict) -> str:
-        """Generate a simple hash for data change detection"""
-        import hashlib
-        data_str = json.dumps(data, sort_keys=True)
-        return hashlib.md5(data_str.encode()).hexdigest()[:16]
     
     def _convert_match(self, match_data: Dict, season: int, event_code: str) -> Dict:
         """Convert FTC API match to our DynamoDB format"""
@@ -543,7 +534,6 @@ class HistoricalDataSync:
             'scoreBlueAuto': match_data.get('scoreBlueAuto', 0),
             'teams': teams,
             'lastUpdated': datetime.now(timezone.utc).isoformat(),
-            'dataHash': self._generate_hash(match_data)
         }
 
 def main():

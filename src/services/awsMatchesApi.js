@@ -69,7 +69,7 @@ class AwsMatchesApi {
             
             // Try a simple request to see if the API is reachable
             const response = await this.axiosInstance.get('/matches', {
-                params: { season: 2024, eventCode: 'TEST', limit: 1 },
+                params: { season: 2025, eventCode: 'TEST', limit: 1 },
                 timeout: 5000
             });
             
@@ -85,7 +85,7 @@ class AwsMatchesApi {
             // Try alternative endpoint
             try {
                 const response = await this.axiosInstance.get('/matches', {
-                    params: { season: 2024, eventCode: 'TEST', limit: 1 },
+                    params: { season: 2025, eventCode: 'TEST', limit: 1 },
                     timeout: 5000
                 });
                 

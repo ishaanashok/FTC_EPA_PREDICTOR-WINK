@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import FTCApi from '../services/FTCApi';
 import '../styles/TeamDetails.css';
 
@@ -7,6 +7,7 @@ const ftcApi = new FTCApi();
 
 function TeamDetails() {
     const { teamNumber } = useParams();
+    const navigate = useNavigate();
     const [events, setEvents] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
@@ -20,22 +21,62 @@ function TeamDetails() {
                 setLoading(true);
                 console.log('Fetching data for team:', teamNumber);
                 
-                const [teamResponse, eventsResponse, epaResponse] = await Promise.all([
-                    ftcApi.getTeams(2024, { teamNumber }),
-                    ftcApi.getEvents(2024, null, teamNumber),
-                    ftcApi.getHistoricalEPA(teamNumber).catch(err => {
-                        console.warn('EPA fetch failed:', err);
-                        return null;
-                    })
+                // Fetch team data (which includes embedded historicEPA) and events
+                const [teamResponse, eventsResponse] = await Promise.all([
+                    ftcApi.getTeams(2025, { teamNumber }),
+                    ftcApi.getEvents(2025, null, teamNumber)
                 ]);
 
                 console.log('Team response:', teamResponse);
                 console.log('Events response:', eventsResponse);
-                console.log('EPA response:', epaResponse);
 
                 // Handle team data - getTeams now returns { teams: [...] }
                 if (teamResponse?.teams?.length > 0) {
-                    setTeamInfo(teamResponse.teams[0]);
+                    const team = teamResponse.teams[0];
+                    setTeamInfo(team);
+                    
+                    // NEW: Extract historicEPA from team data (embedded)
+                    if (team.historicEPA) {
+                        const historicEPA = team.historicEPA;
+                        console.log('Historic EPA from team:', historicEPA);
+                        
+                        setEpa(Number(historicEPA.historicEPA).toFixed(2));
+                        
+                        // Build EPA details from new structure
+                        const seasonEPAs = {};
+                        if (historicEPA.seasonBreakdown) {
+                            Object.keys(historicEPA.seasonBreakdown).forEach(season => {
+                                const seasonData = historicEPA.seasonBreakdown[season];
+                                seasonEPAs[season] = seasonData.averageEPA;
+                            });
+                        }
+                        
+                        setEpaDetails({
+                            historicalEPA: Number(historicEPA.historicEPA).toFixed(2),
+                            currentSeasonEPA: team.currentSeasonEPA ? 
+                                Number(team.currentSeasonEPA.averageEPA).toFixed(2) : 'N/A',
+                            totalMatches: historicEPA.totalHistoricalMatches || 0,
+                            dataQuality: historicEPA.calculationMethod || 'weighted_average',
+                            seasonEPAs: seasonEPAs,
+                            seasonBreakdown: historicEPA.seasonBreakdown,
+                            calculatedAt: historicEPA.calculatedAt,
+                            seasonsWithData: historicEPA.seasonsWithData
+                        });
+                        
+                        console.log('Set EPA Details from new structure:', {
+                            historicalEPA: Number(historicEPA.historicEPA).toFixed(2),
+                            totalMatches: historicEPA.totalHistoricalMatches,
+                            seasonEPAs: seasonEPAs
+                        });
+                    } else {
+                        console.warn('No historicEPA found in team data');
+                        setEpa('N/A');
+                        setEpaDetails(null);
+                    }
+                } else {
+                    console.warn('No team data found');
+                    setEpa('N/A');
+                    setEpaDetails(null);
                 }
 
                 // Handle events data
@@ -43,45 +84,6 @@ function TeamDetails() {
                     setEvents(eventsResponse.events);
                 } else if (Array.isArray(eventsResponse)) {
                     setEvents(eventsResponse);
-                }
-
-                // Handle EPA data - the actual API response structure
-                if (epaResponse?.epaHistory?.length > 0) {
-                    const epaData = epaResponse.epaHistory[0];
-                    console.log('EPA Data from API:', epaData);
-                    console.log('Season EPAs:', epaData.seasonEPAs);
-                    
-                    setEpa(Number(epaData.historicalEPA).toFixed(2));
-                    setEpaDetails({
-                        historicalEPA: Number(epaData.historicalEPA).toFixed(2),
-                        currentSeasonEPA: Number(epaData.currentSeasonEPA).toFixed(2),
-                        totalMatches: epaData.totalMatches,
-                        dataQuality: epaData.dataQuality,
-                        seasonEPAs: epaData.seasonEPAs,
-                        calculatedAt: epaData.calculatedAt
-                    });
-                    
-                    console.log('Set EPA Details:', {
-                        historicalEPA: Number(epaData.historicalEPA).toFixed(2),
-                        currentSeasonEPA: Number(epaData.currentSeasonEPA).toFixed(2),
-                        totalMatches: epaData.totalMatches,
-                        dataQuality: epaData.dataQuality,
-                        seasonEPAs: epaData.seasonEPAs,
-                        calculatedAt: epaData.calculatedAt
-                    });
-                } else if (epaResponse?.historicalEPA !== undefined) {
-                    setEpa(Number(epaResponse.historicalEPA).toFixed(2));
-                    setEpaDetails(null);
-                } else if (epaResponse?.epa !== undefined) {
-                    setEpa(Number(epaResponse.epa).toFixed(2));
-                    setEpaDetails(null);
-                } else if (typeof epaResponse === 'number') {
-                    setEpa(Number(epaResponse).toFixed(2));
-                    setEpaDetails(null);
-                } else {
-                    console.warn('EPA data not found in expected format:', epaResponse);
-                    setEpa('N/A');
-                    setEpaDetails(null);
                 }
             } catch (err) {
                 setError('Failed to fetch team data');
@@ -127,31 +129,36 @@ function TeamDetails() {
                                         <p><strong>Historical EPA:</strong> {epa}</p>
                                         {epaDetails && (
                                             <>
-                                                <p><strong>2024 Season EPA:</strong> {epaDetails.currentSeasonEPA}</p>
-                                                <p><strong>Total Matches:</strong> {epaDetails.totalMatches}</p>
-                                                <p><strong>Data Quality:</strong> {epaDetails.dataQuality}</p>
+                                                <p><strong>Current Season EPA (2025):</strong> {epaDetails.currentSeasonEPA}</p>
+                                                <p><strong>Total Historical Matches:</strong> {epaDetails.totalMatches}</p>
+                                                <p><strong>Calculation Method:</strong> {epaDetails.dataQuality}</p>
+                                                {epaDetails.seasonsWithData && (
+                                                    <p><strong>Seasons with Data:</strong> {epaDetails.seasonsWithData.join(', ')}</p>
+                                                )}
                                                 
-                                                {epaDetails.seasonEPAs && (
+                                                {epaDetails.seasonBreakdown && (
                                                     <div className="season-epas">
-                                                        <p><strong>Season EPAs:</strong></p>
+                                                        <p><strong>Season Breakdown:</strong></p>
                                                         <ul>
-                                                            {epaDetails.seasonEPAs['2024'] && (
-                                                                <li>2024: {Number(epaDetails.seasonEPAs['2024']).toFixed(2)}</li>
-                                                            )}
-                                                            {epaDetails.seasonEPAs['2023'] && (
-                                                                <li>2023: {Number(epaDetails.seasonEPAs['2023']).toFixed(2)}</li>
-                                                            )}
-                                                            {epaDetails.seasonEPAs['2022'] && (
-                                                                <li>2022: {Number(epaDetails.seasonEPAs['2022']).toFixed(2)}</li>
-                                                            )}
-                                                            {epaDetails.seasonEPAs['2021'] && (
-                                                                <li>2021: {Number(epaDetails.seasonEPAs['2021']).toFixed(2)}</li>
-                                                            )}
-                                                            {epaDetails.seasonEPAs['2020'] && (
-                                                                <li>2020: {Number(epaDetails.seasonEPAs['2020']).toFixed(2)}</li>
-                                                            )}
+                                                            {Object.keys(epaDetails.seasonBreakdown)
+                                                                .sort((a, b) => b - a) // Sort descending (newest first)
+                                                                .map(season => {
+                                                                    const data = epaDetails.seasonBreakdown[season];
+                                                                    return (
+                                                                        <li key={season}>
+                                                                            <strong>{season}:</strong> Avg {Number(data.averageEPA).toFixed(2)} 
+                                                                            {' '}(Min: {Number(data.minEPA).toFixed(2)}, 
+                                                                            Max: {Number(data.maxEPA).toFixed(2)}, 
+                                                                            Matches: {data.totalMatches})
+                                                                        </li>
+                                                                    );
+                                                                })}
                                                         </ul>
                                                     </div>
+                                                )}
+                                                
+                                                {epaDetails.calculatedAt && (
+                                                    <p><strong>Last Calculated:</strong> {new Date(epaDetails.calculatedAt).toLocaleString()}</p>
                                                 )}
                                             </>
                                         )}
@@ -162,17 +169,28 @@ function TeamDetails() {
                     )}
 
                     <div className="events-section">
-                        <h2>Events (2024 Season)</h2>
+                        <h2>Events (2025 Season)</h2>
                         <div className="events-grid">
-                            {events.map((event, index) => (
-                                <div key={event.eventCode || event.code || index} className="event-card">
-                                    <h3>{event.eventName || event.name}</h3>
-                                    <p>Date: {formatDate(event.dateStart || event.startDate)} - {formatDate(event.dateEnd || event.endDate)}</p>
-                                    <p>Location: {event.venue}</p>
-                                    <p>City: {event.city}</p>
-                                    <p>Type: {event.eventType || event.type}</p>
-                                </div>
-                            ))}
+                            {events.map((event, index) => {
+                                const eventCode = event.eventCode || event.code;
+                                const eventSeason = event.season || 2025;
+                                
+                                return (
+                                    <div 
+                                        key={eventCode || index} 
+                                        className="event-card clickable"
+                                        onClick={() => navigate(`/events/${eventSeason}/${eventCode}`)}
+                                        style={{ cursor: 'pointer' }}
+                                    >
+                                        <h3>{event.eventName || event.name}</h3>
+                                        <p className="event-code"><strong>Code:</strong> {eventCode}</p>
+                                        <p><strong>Date:</strong> {formatDate(event.dateStart || event.startDate)} - {formatDate(event.dateEnd || event.endDate)}</p>
+                                        <p><strong>Location:</strong> {event.venue}</p>
+                                        <p><strong>City:</strong> {event.city}, {event.stateprov || event.stateProv || event.state}</p>
+                                        <p><strong>Type:</strong> {event.typeName || event.eventType || event.type}</p>
+                                    </div>
+                                );
+                            })}
                         </div>
                         {events.length === 0 && (
                             <p className="no-events">No events found for this team in the current season.</p>

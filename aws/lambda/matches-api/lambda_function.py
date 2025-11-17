@@ -3,6 +3,8 @@ import logging
 import os
 from typing import Dict, List, Any, Optional
 from datetime import datetime, timezone
+from decimal import Decimal
+import asyncio
 
 # AWS SDK
 import boto3
@@ -10,9 +12,16 @@ from botocore.exceptions import ClientError
 
 # Local imports
 from services.dynamodb_service import DynamoDBService
+
+# Custom JSON encoder for Decimal types
+class DecimalEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, Decimal):
+            return float(obj)
+        return super(DecimalEncoder, self).default(obj)
+
 from services.win_probability_service import WinProbabilityService
-# Note: FTC API service requires additional dependencies not in current layer
-# from services.ftc_api_service import FTCApiService
+
 
 # Configure logging
 logging.basicConfig(
@@ -28,48 +37,67 @@ class MatchesApiService:
         self.environment = environment
         self.db_service = DynamoDBService(environment)
         self.win_prob_service = WinProbabilityService(environment)
-        # self.ftc_api_service = FTCApiService()  # Disabled due to missing dependencies
     
     def transform_match_scores(self, match: Dict[str, Any]) -> Dict[str, Any]:
         """Transform DynamoDB score structure to expected format"""
         transformed_match = match.copy()
         
-        # Extract red score
-        red_score = match.get('redScore', {})
-        if isinstance(red_score, dict) and 'totalPoints' in red_score:
-            transformed_match['scoreRedFinal'] = int(red_score.get('totalPoints', 0))
+        # Check if scores are already in the flat format (scoreRedFinal, scoreBlueFinal)
+        if 'scoreRedFinal' in match and 'scoreBlueFinal' in match:
+            # Scores are already in the correct format, just ensure they're integers
+            transformed_match['scoreRedFinal'] = int(match.get('scoreRedFinal', 0))
+            transformed_match['scoreBlueFinal'] = int(match.get('scoreBlueFinal', 0))
+            
+            # Add score breakdown from individual fields if available
+            if 'scoreRedAuto' in match or 'scoreRedFoul' in match:
+                transformed_match['redScoreBreakdown'] = {
+                    'auto': int(match.get('scoreRedAuto', 0)),
+                    'foul': int(match.get('scoreRedFoul', 0)),
+                    'total': int(match.get('scoreRedFinal', 0))
+                }
+            
+            if 'scoreBlueAuto' in match or 'scoreBlueFoul' in match:
+                transformed_match['blueScoreBreakdown'] = {
+                    'auto': int(match.get('scoreBlueAuto', 0)),
+                    'foul': int(match.get('scoreBlueFoul', 0)),
+                    'total': int(match.get('scoreBlueFinal', 0))
+                }
         else:
-            transformed_match['scoreRedFinal'] = int(red_score) if red_score else 0
-        
-        # Extract blue score  
-        blue_score = match.get('blueScore', {})
-        if isinstance(blue_score, dict) and 'totalPoints' in blue_score:
-            transformed_match['scoreBlueFinal'] = int(blue_score.get('totalPoints', 0))
-        else:
-            transformed_match['scoreBlueFinal'] = int(blue_score) if blue_score else 0
-        
-        # Add score breakdown if available
-        if isinstance(red_score, dict):
-            transformed_match['redScoreBreakdown'] = {
-                'auto': int(red_score.get('autoPoints', 0)),
-                'teleop': int(red_score.get('teleopPoints', 0)),
-                'endgame': int(red_score.get('endgamePoints', 0)),
-                'penalty': int(red_score.get('penaltyPoints', 0)),
-                'total': int(red_score.get('totalPoints', 0))
-            }
-        
-        if isinstance(blue_score, dict):
-            transformed_match['blueScoreBreakdown'] = {
-                'auto': int(blue_score.get('autoPoints', 0)),
-                'teleop': int(blue_score.get('teleopPoints', 0)),
-                'endgame': int(blue_score.get('endgamePoints', 0)),
-                'penalty': int(blue_score.get('penaltyPoints', 0)),
-                'total': int(blue_score.get('totalPoints', 0))
-            }
+            # Handle nested score structure (legacy format)
+            red_score = match.get('redScore', {})
+            if isinstance(red_score, dict) and 'totalPoints' in red_score:
+                transformed_match['scoreRedFinal'] = int(red_score.get('totalPoints', 0))
+            else:
+                transformed_match['scoreRedFinal'] = int(red_score) if red_score else 0
+            
+            blue_score = match.get('blueScore', {})
+            if isinstance(blue_score, dict) and 'totalPoints' in blue_score:
+                transformed_match['scoreBlueFinal'] = int(blue_score.get('totalPoints', 0))
+            else:
+                transformed_match['scoreBlueFinal'] = int(blue_score) if blue_score else 0
+            
+            # Add score breakdown if available
+            if isinstance(red_score, dict):
+                transformed_match['redScoreBreakdown'] = {
+                    'auto': int(red_score.get('autoPoints', 0)),
+                    'teleop': int(red_score.get('teleopPoints', 0)),
+                    'endgame': int(red_score.get('endgamePoints', 0)),
+                    'penalty': int(red_score.get('penaltyPoints', 0)),
+                    'total': int(red_score.get('totalPoints', 0))
+                }
+            
+            if isinstance(blue_score, dict):
+                transformed_match['blueScoreBreakdown'] = {
+                    'auto': int(blue_score.get('autoPoints', 0)),
+                    'teleop': int(blue_score.get('teleopPoints', 0)),
+                    'endgame': int(blue_score.get('endgamePoints', 0)),
+                    'penalty': int(blue_score.get('penaltyPoints', 0)),
+                    'total': int(blue_score.get('totalPoints', 0))
+                }
         
         return transformed_match
     
-    async def enrich_matches_with_teams(self, matches: List[Dict[str, Any]], season: int, event_code: str) -> List[Dict[str, Any]]:
+    def enrich_matches_with_teams(self, matches: List[Dict[str, Any]], season: int, event_code: str) -> List[Dict[str, Any]]:
         """Check if matches already have team data, otherwise add empty structure"""
         try:
             enriched_matches = []
@@ -118,18 +146,18 @@ class MatchesApiService:
         """Get matches data from DynamoDB with optional win probability calculations"""
         try:
             if event_code:
-                # Get matches for specific event
-                matches = await self.db_service.get_matches_by_event(
-                    season, event_code, tournament_level
+                # Get matches for specific event (sync call)
+                matches = self.db_service.get_matches_by_event(
+                    event_code, season, tournament_level
                 )
                 
                 # Transform score structures
                 transformed_matches = [self.transform_match_scores(match) for match in matches]
                 
                 # Enrich with team assignment data
-                enriched_matches = await self.enrich_matches_with_teams(transformed_matches, season, event_code)
+                enriched_matches = self.enrich_matches_with_teams(transformed_matches, season, event_code)
                 
-                # Add win probability data if requested
+                # Add win probability data if requested (async call)
                 if include_win_probability and enriched_matches:
                     logger.info(f"Adding win probability data to {len(enriched_matches)} event matches")
                     enriched_matches = await self.win_prob_service.add_win_probability_to_matches(enriched_matches)
@@ -144,8 +172,8 @@ class MatchesApiService:
                 }
             
             elif team_number:
-                # Get matches for specific team
-                matches = await self.db_service.get_matches_by_team(team_number, season)
+                # Get matches for specific team (sync call)
+                matches = self.db_service.get_matches_by_team(team_number, season)
                 
                 # Filter by tournament level if specified
                 if tournament_level:
@@ -154,7 +182,7 @@ class MatchesApiService:
                 # Transform score structures
                 transformed_matches = [self.transform_match_scores(match) for match in matches]
                 
-                # Add win probability data if requested
+                # Add win probability data if requested (async call)
                 if include_win_probability and transformed_matches:
                     logger.info(f"Adding win probability data to {len(transformed_matches)} team matches")
                     transformed_matches = await self.win_prob_service.add_win_probability_to_matches(transformed_matches)
@@ -188,8 +216,8 @@ class MatchesApiService:
     async def get_match_details(self, match_id: str, include_win_probability: bool = True) -> Dict[str, Any]:
         """Get detailed information about a specific match with win probability"""
         try:
-            # Get match basic info
-            match = await self.db_service.get_match(match_id)
+            # Get match basic info (sync call)
+            match = self.db_service.get_match(match_id)
             
             if not match:
                 return {
@@ -201,7 +229,7 @@ class MatchesApiService:
             # Transform score structure
             transformed_match = self.transform_match_scores(match)
             
-            # Add win probability data if requested
+            # Add win probability data if requested (async call)
             if include_win_probability:
                 transformed_match = await self.win_prob_service.add_win_probability_to_match(transformed_match)
             
@@ -242,8 +270,8 @@ class MatchesApiService:
     async def get_match_predictions(self, match_id: str) -> Dict[str, Any]:
         """Get predictions for a specific match"""
         try:
-            # Get match details
-            match = await self.db_service.get_match(match_id)
+            # Get match details (sync call)
+            match = self.db_service.get_match(match_id)
             
             if not match:
                 return {
@@ -252,7 +280,7 @@ class MatchesApiService:
                     "predictions": None
                 }
             
-            # Get EPA data for teams
+            # Get EPA data for teams (async call)
             all_teams = match.get('allTeams', [])
             team_epas = await self.db_service.batch_get_team_epas(all_teams)
             
@@ -416,7 +444,7 @@ async def lambda_handler(event, context):
                 'Content-Type': 'application/json',
                 'Access-Control-Allow-Origin': '*'
             },
-            'body': json.dumps(result)
+            'body': json.dumps(result, cls=DecimalEncoder)
         }
         
     except Exception as e:
@@ -436,22 +464,30 @@ async def lambda_handler(event, context):
 
 def handler(event, context):
     """Synchronous wrapper for async lambda handler"""
-    import asyncio
     try:
         # Try to get the existing event loop
         loop = asyncio.get_event_loop()
+        if loop.is_closed():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
     except RuntimeError:
         # No event loop in current thread, create a new one
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
     
     try:
-        # Use run_until_complete instead of asyncio.run for Lambda compatibility
+        # Use run_until_complete for Lambda compatibility
         return loop.run_until_complete(lambda_handler(event, context))
-    finally:
-        # Clean up any remaining tasks
-        pending = asyncio.all_tasks(loop)
-        for task in pending:
-            task.cancel()
-        if pending:
-            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True)) 
+    except Exception as e:
+        logger.error(f"Handler error: {str(e)}")
+        return {
+            'statusCode': 500,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            },
+            'body': json.dumps({
+                'error': str(e),
+                'success': False
+            })
+        }

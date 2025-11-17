@@ -34,12 +34,21 @@ class FTCApiService:
     
     async def initialize(self):
         """Initialize the HTTP session"""
+        import ssl
+        import certifi
+        
+        # Create SSL context with proper CA bundle
+        ssl_context = ssl.create_default_context(cafile=certifi.where())
+        
         timeout = aiohttp.ClientTimeout(total=60, connect=15)
+        connector = aiohttp.TCPConnector(ssl=ssl_context)
+        
         self.session = aiohttp.ClientSession(
             headers=self.headers,
-            timeout=timeout
+            timeout=timeout,
+            connector=connector
         )
-        logger.info("FTC API Service initialized")
+        logger.info("FTC API Service initialized with SSL context")
     
     async def close(self):
         """Close the HTTP session"""
@@ -270,8 +279,8 @@ class FTCApiService:
             page += 1
             
             # Safety check to prevent infinite loops
-            if page > 100:  # Reasonable upper limit
-                logger.warning(f"[FTC API] Reached page limit (100), stopping pagination")
+            if page > 500:  # Increased upper limit for large datasets
+                logger.warning(f"[FTC API] Reached page limit (500), stopping pagination")
                 break
         
         logger.info(f"[FTC API] Teams sync complete: {len(all_teams)} total teams collected across {page-1} pages")
@@ -365,8 +374,8 @@ class FTCApiService:
             page += 1
             
             # Safety check to prevent infinite loops
-            if page > 100:  # Reasonable upper limit
-                logger.warning(f"[FTC API] Reached page limit (100), stopping pagination")
+            if page > 500:  # Increased upper limit for large datasets
+                logger.warning(f"[FTC API] Reached page limit (500), stopping pagination")
                 break
         
         logger.info(f"[FTC API] Events sync complete: {len(all_events)} total events collected across {page-1} pages")

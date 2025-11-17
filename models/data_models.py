@@ -47,12 +47,11 @@ class Team(DynamoDBBaseModel):
     website: Optional[str] = Field(None, description="Team website")
     lastUpdated: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     
-    # HTTP Caching Support & Change Detection
+    # HTTP Caching Support
     lastModified: Optional[str] = Field(None, description="Last-Modified header from FTC API")
     etag: Optional[str] = Field(None, description="ETag from FTC API response")
     apiLastModified: Optional[datetime] = Field(None, description="Parsed Last-Modified timestamp")
     dataVersion: Optional[str] = Field(None, description="Data version for change tracking")
-    dataHash: Optional[str] = Field(None, description="Hash of team data for EPA update detection")
     
     class Config:
         json_encoders = {
@@ -80,12 +79,11 @@ class Event(DynamoDBBaseModel):
     teamNumbers: Optional[str] = Field(None, description="Comma-separated list of team numbers attending the event")
     lastUpdated: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     
-    # HTTP Caching Support & Change Detection
+    # HTTP Caching Support
     lastModified: Optional[str] = Field(None, description="Last-Modified header from FTC API")
     etag: Optional[str] = Field(None, description="ETag from FTC API response")
     apiLastModified: Optional[datetime] = Field(None, description="Parsed Last-Modified timestamp")
     dataVersion: Optional[str] = Field(None, description="Data version for change tracking")
-    dataHash: Optional[str] = Field(None, description="Hash of event data for EPA update detection")
     matchesLastModified: Optional[str] = Field(None, description="Last-Modified for matches endpoint")
     rankingsLastModified: Optional[str] = Field(None, description="Last-Modified for rankings endpoint")
 
@@ -127,12 +125,11 @@ class Match(DynamoDBBaseModel):
     
     lastUpdated: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     
-    # HTTP Caching Support & Change Detection
+    # HTTP Caching Support
     lastModified: Optional[str] = Field(None, description="Last-Modified header from FTC API")
     etag: Optional[str] = Field(None, description="ETag from FTC API response")
     apiLastModified: Optional[datetime] = Field(None, description="Parsed Last-Modified timestamp")
     dataVersion: Optional[str] = Field(None, description="Data version for change tracking")
-    dataHash: Optional[str] = Field(None, description="Hash of match data for EPA update detection")
 
 class EPACalculation(DynamoDBBaseModel):
     """EPA calculation model for FTC_EPA table"""

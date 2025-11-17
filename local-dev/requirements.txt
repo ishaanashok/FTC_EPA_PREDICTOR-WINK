@@ -1,0 +1,36 @@
+# FTC Predictor Local Development Requirements
+
+# Database drivers
+psycopg2-binary==2.9.7
+asyncpg==0.28.0
+
+# AWS SDK
+boto3==1.28.85
+botocore==1.31.85
+
+# Data processing
+pandas==2.1.1
+numpy==1.24.3
+
+# Web framework (for local API server)
+fastapi==0.103.2
+uvicorn==0.23.2
+
+# Data validation
+pydantic==1.10.12
+
+# Utilities
+python-dotenv==1.0.0
+click==8.1.7
+rich==13.6.0
+
+# Development tools
+pytest==7.4.2
+pytest-asyncio==0.21.1
+black==23.9.1
+isort==5.12.0
+flake8==6.1.0
+
+# Optional: Database migration tools
+alembic==1.12.0
+sqlalchemy==2.0.21

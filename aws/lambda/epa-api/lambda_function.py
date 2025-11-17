@@ -19,129 +19,206 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 class EPAApiService:
-    """EPA API service - reads directly from DynamoDB"""
+    """
+    EPA API service for new schema (v2.0)
     
-    def __init__(self, environment: str = 'dev'):
+    Supports:
+    - Historic EPA (embedded in team records)
+    - Per-match EPA (TeamMatchEPA table)
+    - Event EPA summaries
+    """
+    
+    def __init__(self, environment: str = 'stage'):
         self.environment = environment
         self.db_service = DynamoDBService(environment)
     
-    async def get_team_epa(self, team_number: int, historical: bool = False) -> Dict[str, Any]:
-        """Get EPA data for a specific team"""
+    def get_team_historic_epa(self, team_number: int, season: int = 2025) -> Dict[str, Any]:
+        """Get historic EPA for a team (embedded in team record)"""
         try:
-            if historical:
-                # Get historical EPA data
-                epa_history = await self.db_service.get_historical_epa(team_number, limit=10)
+            team = self.db_service.get_team(team_number, season)
+            
+            if not team:
+                return {
+                    "success": False,
+                    "error": f"Team {team_number} not found for season {season}",
+                    "teamNumber": team_number,
+                    "historicEPA": None
+                }
+            
+            historic_epa = team.get('historicEPA')
+            
+            if not historic_epa:
                 return {
                     "success": True,
                     "teamNumber": team_number,
-                    "epaHistory": epa_history,
-                    "total": len(epa_history)
+                    "historicEPA": None,
+                    "message": f"No historic EPA data available for team {team_number}"
                 }
-            else:
-                # Get latest EPA data
-                epa_data = await self.db_service.get_latest_epa(team_number)
-                if epa_data:
-                    return {
-                        "success": True,
-                        "teamNumber": team_number,
-                        "epa": epa_data
-                    }
-                else:
-                    return {
-                        "success": True,
-                        "teamNumber": team_number,
-                        "epa": None,
-                        "message": f"No EPA data found for team {team_number}"
-                    }
+            
+            return {
+                "success": True,
+                "teamNumber": team_number,
+                "historicEPA": historic_epa
+            }
                 
         except Exception as e:
-            logger.error(f"Error getting EPA for team {team_number}: {str(e)}")
+            logger.error(f"Error getting historic EPA for team {team_number}: {str(e)}")
             return {
                 "success": False,
                 "error": str(e),
                 "teamNumber": team_number,
-                "epa": None
+                "historicEPA": None
             }
     
-    async def get_multiple_team_epas(self, team_numbers: List[int]) -> Dict[str, Any]:
-        """Get EPA data for multiple teams"""
+    def get_team_season_epa(self, team_number: int, season: int) -> Dict[str, Any]:
+        """Get per-match EPA records for a team in a season"""
         try:
-            team_epas = await self.db_service.batch_get_team_epas(team_numbers)
+            epa_records = self.db_service.get_team_season_epa(team_number, season)
             
-            # Convert to more structured format
-            epa_results = []
-            for team_number in team_numbers:
-                epa_value = team_epas.get(str(team_number), 0.0)
-                epa_results.append({
-                    "teamNumber": team_number,
-                    "epa": epa_value
-                })
+            # Calculate summary
+            summary = None
+            if epa_records:
+                latest_record = epa_records[-1]
+                summary = {
+                    "averageEPA": latest_record.get('averageEPA'),
+                    "cumulativeEPA": latest_record.get('cumulativeEPA'),
+                    "matchCount": latest_record.get('matchCount'),
+                    "latestMatchEPA": latest_record.get('matchEPA')
+                }
             
             return {
                 "success": True,
-                "teams": epa_results,
-                "total": len(epa_results)
+                "teamNumber": team_number,
+                "season": season,
+                "epaRecords": epa_records,
+                "summary": summary,
+                "totalMatches": len(epa_records)
             }
                 
         except Exception as e:
-            logger.error(f"Error getting EPAs for teams {team_numbers}: {str(e)}")
+            logger.error(f"Error getting season EPA for team {team_number}, season {season}: {str(e)}")
             return {
                 "success": False,
                 "error": str(e),
-                "teams": [],
-                "total": 0
+                "teamNumber": team_number,
+                "season": season,
+                "epaRecords": [],
+                "totalMatches": 0
             }
     
-    async def get_top_teams_by_epa(self, limit: int = 20) -> Dict[str, Any]:
-        """Get top teams by EPA (simplified implementation)"""
+    def get_team_event_epa(self, team_number: int, event_code: str) -> Dict[str, Any]:
+        """Get EPA records for a team at a specific event"""
         try:
-            # This is a simplified implementation
-            # In a real system, you'd have a GSI to query by EPA value
-            logger.warning("get_top_teams_by_epa is a simplified implementation")
+            epa_records = self.db_service.get_team_event_epa(team_number, event_code)
+            
+            # Calculate summary
+            summary = None
+            if epa_records:
+                latest_record = epa_records[-1]
+                summary = {
+                    "averageEPA": latest_record.get('averageEPA'),
+                    "matchCount": latest_record.get('matchCount'),
+                    "latestMatchEPA": latest_record.get('matchEPA')
+                }
             
             return {
                 "success": True,
-                "message": "Top teams by EPA - feature not yet implemented",
-                "teams": [],
-                "total": 0
+                "teamNumber": team_number,
+                "eventCode": event_code,
+                "epaRecords": epa_records,
+                "summary": summary,
+                "totalMatches": len(epa_records)
             }
                 
         except Exception as e:
-            logger.error(f"Error getting top teams by EPA: {str(e)}")
+            logger.error(f"Error getting event EPA for team {team_number}, event {event_code}: {str(e)}")
             return {
                 "success": False,
                 "error": str(e),
-                "teams": [],
-                "total": 0
+                "teamNumber": team_number,
+                "eventCode": event_code,
+                "epaRecords": [],
+                "totalMatches": 0
             }
     
-    async def get_team_epa_comparison(self, team_numbers: List[int]) -> Dict[str, Any]:
-        """Compare EPA values between teams"""
+    def get_event_team_epas(self, event_code: str, season: int = 2025) -> Dict[str, Any]:
+        """Get EPA summary for all teams at an event"""
+        try:
+            # Get all teams at this event
+            teams = self.db_service.get_teams_by_event(season, event_code)
+            
+            # Get EPA for each team
+            team_epas = {}
+            for team in teams:
+                team_number = team.get('teamNumber')
+                if team_number:
+                    # Convert to int to handle float/Decimal types
+                    team_number = int(team_number)
+                    
+                    # Get historic EPA from team record
+                    historic_epa_val = None
+                    if 'historicEPA' in team and team['historicEPA']:
+                        historic_epa_val = team['historicEPA'].get('historicEPA')
+                    
+                    # Get latest event EPA from TeamMatchEPA table
+                    event_epa_records = self.db_service.get_team_event_epa(team_number, event_code)
+                    event_epa_val = None
+                    if event_epa_records:
+                        event_epa_val = event_epa_records[-1].get('averageEPA')
+                    
+                    team_epas[str(team_number)] = {
+                        "teamNumber": team_number,
+                        "historicEPA": historic_epa_val,
+                        "eventEPA": event_epa_val,
+                        "eventMatches": len(event_epa_records)
+                    }
+            
+            return {
+                "success": True,
+                "eventCode": event_code,
+                "season": season,
+                "teamEPAs": team_epas,
+                "totalTeams": len(team_epas)
+            }
+                
+        except Exception as e:
+            logger.error(f"Error getting event team EPAs for {event_code}: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e),
+                "eventCode": event_code,
+                "teamEPAs": {},
+                "totalTeams": 0
+            }
+    
+    def compare_team_epas(self, team_numbers: List[int], season: int = 2025) -> Dict[str, Any]:
+        """Compare historic EPA between multiple teams"""
         try:
             if len(team_numbers) < 2:
                 return {
                     "success": False,
                     "error": "At least 2 teams required for comparison",
-                    "comparison": None
+                    "comparison": []
                 }
             
-            # Get EPA data for all teams
-            team_epas = await self.db_service.batch_get_team_epas(team_numbers)
-            
-            # Build comparison data
             comparison_data = []
             for team_number in team_numbers:
-                epa_value = team_epas.get(str(team_number), 0.0)
-                comparison_data.append({
-                    "teamNumber": team_number,
-                    "epa": epa_value
-                })
+                team = self.db_service.get_team(team_number, season)
+                if team:
+                    historic_epa = team.get('historicEPA', {})
+                    comparison_data.append({
+                        "teamNumber": team_number,
+                        "name": team.get('nameShort', team.get('nameFull', 'Unknown')),
+                        "historicEPA": historic_epa.get('historicEPA'),
+                        "totalMatches": historic_epa.get('totalHistoricalMatches'),
+                        "seasonsWithData": historic_epa.get('seasonsWithData', [])
+                    })
             
             # Sort by EPA descending
-            comparison_data.sort(key=lambda x: x["epa"], reverse=True)
+            comparison_data.sort(key=lambda x: x.get("historicEPA") or 0, reverse=True)
             
             # Calculate statistics
-            epa_values = [team["epa"] for team in comparison_data]
+            epa_values = [team.get("historicEPA") or 0 for team in comparison_data]
             max_epa = max(epa_values) if epa_values else 0
             min_epa = min(epa_values) if epa_values else 0
             avg_epa = sum(epa_values) / len(epa_values) if epa_values else 0
@@ -162,16 +239,16 @@ class EPAApiService:
             return {
                 "success": False,
                 "error": str(e),
-                "comparison": None
+                "comparison": []
             }
 
 
-async def lambda_handler(event, context):
+def lambda_handler(event, context):
     """Lambda handler for EPA API"""
     
     # Initialize service
     api_service = EPAApiService(
-        environment=os.environ.get('ENVIRONMENT', 'dev')
+        environment=os.environ.get('ENVIRONMENT', 'stage')
     )
     
     try:
@@ -180,63 +257,50 @@ async def lambda_handler(event, context):
         path_parameters = event.get('pathParameters') or {}
         query_parameters = event.get('queryStringParameters') or {}
         
+        # Default season
+        season = int(query_parameters.get('season', 2025))
+        
         # Handle different endpoints
         if http_method == 'GET':
-            # Check if specific team requested
+            # GET /epa/{teamNumber} - Get historic EPA for a team
             team_number_str = path_parameters.get('teamNumber')
             if team_number_str:
                 team_number = int(team_number_str)
-                historical = query_parameters.get('historical', '').lower() == 'true'
-                result = await api_service.get_team_epa(team_number, historical)
+                
+                # Check if season EPA requested
+                if query_parameters.get('type') == 'season':
+                    result = api_service.get_team_season_epa(team_number, season)
+                # Check if event EPA requested
+                elif 'eventCode' in query_parameters:
+                    event_code = query_parameters['eventCode']
+                    result = api_service.get_team_event_epa(team_number, event_code)
+                # Default: historic EPA
+                else:
+                    result = api_service.get_team_historic_epa(team_number, season)
             
-            # Check if event EPA data requested
-            elif query_parameters.get('eventCode'):
-                event_code = query_parameters.get('eventCode')
-                season = int(query_parameters.get('season', 2024))
-                
-                # Get teams for this event
-                from services.dynamodb_service import DynamoDBService
-                db_service = DynamoDBService(os.environ.get('ENVIRONMENT', 'dev'))
-                teams = await db_service.get_teams_by_event(season, event_code)
-                
-                # Get EPA for each team
-                epas = {}
-                for team in teams:
-                    team_number = team.get('teamNumber')
-                    if team_number:
-                        try:
-                            epa_data = await db_service.get_latest_epa(int(team_number))
-                            if epa_data and 'historicalEPA' in epa_data:
-                                epas[str(team_number)] = epa_data['historicalEPA']
-                            else:
-                                epas[str(team_number)] = 50.0  # Default EPA
-                        except Exception as e:
-                            logger.warning(f"Failed to get EPA for team {team_number}: {e}")
-                            epas[str(team_number)] = 50.0  # Default EPA
-                
-                result = {
-                    "success": True,
-                    "eventCode": event_code,
-                    "season": season,
-                    "epas": epas,
-                    "teamCount": len(teams)
-                }
+            # GET /epa?eventCode=XXX - Get EPA for all teams at event
+            elif 'eventCode' in query_parameters:
+                event_code = query_parameters['eventCode']
+                result = api_service.get_event_team_epas(event_code, season)
             
-            # Check if multiple teams requested
+            # GET /epa?teams=1,2,3&compare=true - Compare teams
             elif 'teams' in query_parameters:
                 team_numbers_str = query_parameters['teams']
                 team_numbers = [int(t.strip()) for t in team_numbers_str.split(',')]
                 
-                # Check if comparison requested
                 if query_parameters.get('compare', '').lower() == 'true':
-                    result = await api_service.get_team_epa_comparison(team_numbers)
+                    result = api_service.compare_team_epas(team_numbers, season)
                 else:
-                    result = await api_service.get_multiple_team_epas(team_numbers)
-            
-            # Check if top teams requested
-            elif query_parameters.get('top', '').lower() == 'true':
-                limit = int(query_parameters.get('limit', 20))
-                result = await api_service.get_top_teams_by_epa(limit)
+                    # Get individual EPAs
+                    results = []
+                    for team_number in team_numbers:
+                        epa_result = api_service.get_team_historic_epa(team_number, season)
+                        results.append(epa_result)
+                    result = {
+                        "success": True,
+                        "teams": results,
+                        "total": len(results)
+                    }
             
             else:
                 return {
@@ -246,7 +310,14 @@ async def lambda_handler(event, context):
                         'Access-Control-Allow-Origin': '*'
                     },
                     'body': json.dumps({
-                        'error': 'Missing required parameters. Use teamNumber, teams, eventCode, or top=true',
+                        'error': 'Missing required parameters. Use teamNumber, eventCode, or teams',
+                        'examples': {
+                            'teamHistoricEPA': '/epa/{teamNumber}?season=2025',
+                            'teamSeasonEPA': '/epa/{teamNumber}?type=season&season=2025',
+                            'teamEventEPA': '/epa/{teamNumber}?eventCode=USCASD',
+                            'eventTeamEPAs': '/epa?eventCode=USCASD&season=2025',
+                            'compareTeams': '/epa?teams=1,2,3&compare=true&season=2025'
+                        },
                         'success': False
                     })
                 }
@@ -288,23 +359,6 @@ async def lambda_handler(event, context):
 
 
 def handler(event, context):
-    """Synchronous wrapper for async lambda handler"""
-    import asyncio
-    try:
-        # Try to get the existing event loop
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        # No event loop in current thread, create a new one
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    
-    try:
-        # Use run_until_complete instead of asyncio.run for Lambda compatibility
-        return loop.run_until_complete(lambda_handler(event, context))
-    finally:
-        # Clean up any remaining tasks
-        pending = asyncio.all_tasks(loop)
-        for task in pending:
-            task.cancel()
-        if pending:
-            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True)) 
+    """Main handler for Lambda function"""
+    return lambda_handler(event, context)
+

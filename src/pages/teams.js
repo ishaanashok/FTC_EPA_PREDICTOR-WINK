@@ -38,22 +38,22 @@ function Teams() {
             setLoading(true);
             if (searchParams.teamNumber) {
                 const params = { page: currentPage, ...searchParams };
-                const response = await ftcApi.getTeams(2024, params);
+                const response = await ftcApi.getTeams(2025, params);
                 const teamsData = response?.teams || [];
                 setTeams(teamsData);
                 setFilteredTeams(teamsData);
             } else if (searchParams.search) {
-                const response = await ftcApi.getTeams(2024, {});
+                const response = await ftcApi.getTeams(2025, {});
                 const allTeamsData = response?.teams || [];
                 setAllTeams(allTeamsData);
                 const filtered = allTeamsData.filter(team =>
-                    team.teamName && team.teamName.toLowerCase().includes(searchParams.search.toLowerCase())
+                    team.nameShort && team.nameShort.toLowerCase().includes(searchParams.search.toLowerCase())
                 );
                 setFilteredTeams(filtered);
                 setTeams(filtered);
             } else {
                 const params = { page: currentPage };
-                const response = await ftcApi.getTeams(2024, params);
+                const response = await ftcApi.getTeams(2025, params);
                 const teamsData = response?.teams || [];
                 setTeams(teamsData);
                 setFilteredTeams(teamsData);
@@ -123,7 +123,7 @@ function Teams() {
                                 onClick={() => navigate(`/team/${team.teamNumber}`)}
                             >
                                 <h3>Team {team.teamNumber}</h3>
-                                <p className="team-name">{team.teamName}</p>
+                                <p className="team-name">{team.nameShort}</p>
                                 <p className="team-location">{team.city}{team.state && `, ${team.state}`}</p>
                                 <p className="team-country">{team.country}</p>
                             </div>
