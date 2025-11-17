@@ -17,3 +17,6 @@ Git commands:
  > provide username and PAT (personal Access Token from .git-credentials file)
  > Run this from "Git bash" console
  
+
+ Build and deploy to S3 public site:
+ > export NODE_ENV=production GENERATE_SOURCEMAP=false && npm run build && aws s3 sync build/ s3://ftc-predictor-frontend-stage/ --delete
