@@ -441,7 +441,7 @@ class FTCApiService:
             season: Competition season
             event_codes: List of event codes to fetch
             if_modified_since: Optional If-Modified-Since header value
-            
+        
         Returns:
             Dict with event_code as key and event data as value
         """
@@ -505,4 +505,4 @@ class FTCApiService:
                 if event_code:
                     event_data[event_code] = result
 
-        return event_data 
+        return event_data

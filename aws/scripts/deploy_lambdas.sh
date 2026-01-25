@@ -154,9 +154,10 @@ main() {
     echo "8. Matches Sync"
     echo "9. EPA Calculator"
     echo "10. All functions"
+    echo "11. Events Teams Sync"
     echo "0. Cancel"
     echo ""
-    read -p "Enter your choice (0-10): " choice
+    read -p "Enter your choice (0-11): " choice
     
     case $choice in
         1)
@@ -198,6 +199,10 @@ main() {
             deploy_lambda "$LAMBDA_BASE_DIR/events-sync" "ftc-events-sync-$ENVIRONMENT" "Events Sync"
             deploy_lambda "$LAMBDA_BASE_DIR/matches-sync" "ftc-matches-sync-$ENVIRONMENT" "Matches Sync"
             deploy_lambda "$LAMBDA_BASE_DIR/epa-calculator" "ftc-epa-calculator-$ENVIRONMENT" "EPA Calculator"
+            deploy_lambda "$LAMBDA_BASE_DIR/events-teams-sync" "ftc-events-teams-sync-$ENVIRONMENT" "Events Teams Sync"
+            ;;
+        11)
+            deploy_lambda "$LAMBDA_BASE_DIR/events-teams-sync" "ftc-events-teams-sync-$ENVIRONMENT" "Events Teams Sync"
             ;;
         0)
             print_info "Deployment cancelled"

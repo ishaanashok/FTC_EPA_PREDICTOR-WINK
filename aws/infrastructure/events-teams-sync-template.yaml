@@ -1,0 +1,82 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Events Teams Sync Lambda (standalone stack)'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: stage
+    AllowedValues:
+      - dev
+      - stage
+      - prod
+    Description: Environment name for resource naming
+  SecretsName:
+    Type: String
+    Default: FTC-API-Credentials-stage
+    Description: Secrets Manager name for FTC API credentials
+  RoleName:
+    Type: String
+    Default: FTC-Lambda-Role-stage
+    Description: Existing IAM role name for the Lambda function
+  DaysBack:
+    Type: Number
+    Default: 7
+    Description: Number of days back to include in sync window
+  Season:
+    Type: Number
+    Default: 2025
+    Description: FTC season year
+
+Resources:
+  EventsTeamsSyncFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'ftc-events-teams-sync-${Environment}'
+      Runtime: python3.11
+      Handler: lambda_function.lambda_handler
+      Role: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${RoleName}'
+      Timeout: 900
+      MemorySize: 1024
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          SECRETS_NAME: !Ref SecretsName
+          DAYS_BACK: !Ref DaysBack
+          SEASON: !Ref Season
+      Code:
+        ZipFile: |
+          def lambda_handler(event, context):
+              return {
+                  'statusCode': 200,
+                  'body': 'Placeholder - deploy actual code'
+              }
+      Description: 'Sync event teams into DynamoDB for recent events'
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: FTC-Predictor
+
+  EventsTeamsSyncWeeklyRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub 'ftc-events-teams-sync-weekly-${Environment}'
+      Description: 'Run event teams sync weekly'
+      ScheduleExpression: rate(7 days)
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt EventsTeamsSyncFunction.Arn
+          Id: EventsTeamsSyncWeeklyTarget
+
+  EventsTeamsSyncWeeklyPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt EventsTeamsSyncFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt EventsTeamsSyncWeeklyRule.Arn
+
+Outputs:
+  EventsTeamsSyncFunctionArn:
+    Description: ARN of Events Teams Sync Lambda function
+    Value: !GetAtt EventsTeamsSyncFunction.Arn

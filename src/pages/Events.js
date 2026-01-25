@@ -31,6 +31,27 @@ function Events() {
   const [searchText, setSearchText] = useState('');
   const [filter, setFilter] = useState('upcoming');
 
+  const getEventName = (event) => {
+    if (!event || typeof event !== 'object') {
+      return 'Event';
+    }
+    return event.name || event.eventName || event.eventTitle || 'Event';
+  };
+
+  const getEventCode = (event) => {
+    if (!event || typeof event !== 'object') {
+      return '';
+    }
+    return event.code || event.eventCode || '';
+  };
+
+  const getEventState = (event) => {
+    if (!event || typeof event !== 'object') {
+      return '';
+    }
+    return event.stateprov || event.stateProv || event.state || '';
+  };
+
   const fetchEvents = async () => {
     try {
       setLoading(true);
@@ -170,15 +191,18 @@ function Events() {
   };
 
   const filteredEvents = events.filter(event => {
+    if (!event || typeof event !== 'object') {
+      return false;
+    }
     // Exclude Workshop and Scrimmage events
     if (event.typeName === 'Workshop' || event.typeName === 'Scrimmage') {
       return false;
     }
 
     const matchesSearch = 
-      (event.name?.toLowerCase() || '').includes(searchText.toLowerCase()) ||
+      getEventName(event).toLowerCase().includes(searchText.toLowerCase()) ||
       (event.city?.toLowerCase() || '').includes(searchText.toLowerCase()) ||
-      (event.stateprov?.toLowerCase() || '').includes(searchText.toLowerCase());
+      getEventState(event).toLowerCase().includes(searchText.toLowerCase());
     
     const status = getStatusLabel(event.dateStart, event.dateEnd).toLowerCase();
     const matchesFilter = filter === 'all' || status === filter.toLowerCase();
@@ -261,18 +285,18 @@ function Events() {
                   </Grid>
                 ) : (
                   filteredEvents.map((event) => (
-                    <Grid item xs={12} sm={6} md={4} key={`2025-${event.code}`}>
+                    <Grid item xs={12} sm={6} md={4} key={`2025-${getEventCode(event) || 'unknown'}`}>
                       <Card sx={{ height: '100%' }}>
-                        <CardActionArea onClick={() => navigate(`/events/2025/${event.code}`)}>
+                        <CardActionArea onClick={() => navigate(`/events/2025/${getEventCode(event)}`)}>
                           <CardContent>
                             <Typography variant="h6" gutterBottom>
-                              {event.name}
+                              {getEventName(event)}
                             </Typography>
                             <Typography color="textSecondary" gutterBottom>
                               {new Date(event.dateStart).toLocaleDateString()} - {new Date(event.dateEnd).toLocaleDateString()}
                             </Typography>
                             <Typography gutterBottom>
-                              {event.city}, {event.stateprov || event.stateProv}
+                              {event.city}, {getEventState(event)}
                             </Typography>
                             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 2 }}>
                               <Chip

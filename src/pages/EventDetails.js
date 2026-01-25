@@ -39,6 +39,10 @@ const EventDetails = () => {
   const [isAdmin, setIsAdmin] = useState(false);
   const ftcApi = new FTCApi();
 
+  const getEventName = (event) => {
+    return event?.name || event?.eventName || event?.eventTitle || 'Event Details';
+  };
+
   const fetchEventData = async () => {
         try {
             setLoading(true);
@@ -168,7 +172,7 @@ const EventDetails = () => {
       <Paper elevation={3} sx={{ p: 3, mb: 4 }}>
         <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
           <Typography variant="h4">
-            {eventDetails?.events[0]?.name || 'Event Details'}
+            {getEventName(eventDetails?.events?.[0])}
           </Typography>
           <IconButton 
             onClick={handleRefresh} 

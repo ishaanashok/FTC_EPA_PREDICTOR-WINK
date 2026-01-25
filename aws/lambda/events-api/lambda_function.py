@@ -108,10 +108,48 @@ class EventsApiService:
             except Exception as e:
                 logger.warning(f"Could not load matches for event {event_code}: {str(e)}")
             
-            try:
-                teams = self.db_service.get_teams_by_event(season, event_code)
-            except Exception as e:
-                logger.warning(f"Could not load teams for event {event_code}: {str(e)}")
+            event_teams = event.get('teams') if event else None
+            if isinstance(event_teams, list) and event_teams:
+                teams = event_teams
+            else:
+                try:
+                    teams = self.db_service.get_teams_by_event(season, event_code)
+                except Exception as e:
+                    logger.warning(f"Could not load teams for event {event_code}: {str(e)}")
+
+            # Fallback: build teams from matches if teams list is empty
+            if not teams and matches:
+                team_numbers = set()
+                for match in matches:
+                    match_team_numbers = match.get('teamNumbers')
+                    if match_team_numbers:
+                        if isinstance(match_team_numbers, str):
+                            split_numbers = [tn.strip() for tn in match_team_numbers.split(',') if tn.strip()]
+                            team_numbers.update(int(tn) for tn in split_numbers)
+                        else:
+                            team_numbers.update(int(tn) for tn in match_team_numbers)
+
+                    all_teams = match.get('allTeams') or []
+                    team_numbers.update(int(tn) for tn in all_teams)
+
+                    red_teams = match.get('redTeams') or []
+                    blue_teams = match.get('blueTeams') or []
+                    team_numbers.update(int(tn) for tn in red_teams)
+                    team_numbers.update(int(tn) for tn in blue_teams)
+
+                    team_entries = match.get('teams') or []
+                    for team_entry in team_entries:
+                        if isinstance(team_entry, dict):
+                            team_number = team_entry.get('teamNumber')
+                            if team_number is not None:
+                                team_numbers.add(int(team_number))
+                        elif team_entry is not None:
+                            team_numbers.add(int(team_entry))
+
+                for team_number in team_numbers:
+                    team = self.db_service.get_team(int(team_number), season)
+                    if team:
+                        teams.append(team)
             
             # Separate matches by tournament level
             # Handle various formats: 'qual', 'QUAL', 'qualification', 'QUALIFICATION', etc.

@@ -88,6 +88,10 @@ def prepare_team_item(team: Dict[str, Any]) -> Dict[str, Any]:
     # Numeric fields
     if 'rookieYear' in team and team['rookieYear'] is not None:
         item['rookieYear'] = team['rookieYear']
+    if 'matchCount' in team and team['matchCount'] is not None:
+        item['matchCount'] = team['matchCount']
+    else:
+        item['matchCount'] = 0
     
     # Historic EPA (NEW - embedded from teams_YYYY.json)
     # This is a pre-calculated aggregated EPA with season breakdown

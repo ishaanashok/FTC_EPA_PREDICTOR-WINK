@@ -457,11 +457,11 @@ class FTCApi {
             };
         }
         
-        // Get teams from the teams API that we just fixed
-        console.log('Fetching teams from AWS Teams API...');
-        const teamsResponse = await this.getTeams(season, { eventCode });
-        const teams = teamsResponse?.teams || [];
-        console.log('Teams fetched from real API:', teams.length, 'teams');
+        const eventTeams = eventDetails?.events?.[0]?.teams;
+        let teams = Array.isArray(eventTeams) ? eventTeams : [];
+        if (teams.length > 0) {
+            console.log('Teams fetched from Events API:', teams.length, 'teams');
+        }
         
         // Get matches for the event
         let matches = [];
@@ -475,24 +475,90 @@ class FTCApi {
             console.warn('Failed to get matches:', matchError);
             matches = [];
         }
-        
-        // Get EPAs from EPA API (NEW - uses getEventTeamEPAs)
-        const teamEPAs = {};
-        try {
-            const epaResponse = await this.getEventTeamEPAs(eventCode, season);
-            if (epaResponse && epaResponse.success && epaResponse.teamEPAs) {
-                // Convert new EPA format to legacy format for compatibility
-                Object.keys(epaResponse.teamEPAs).forEach(teamNum => {
-                    const teamEPA = epaResponse.teamEPAs[teamNum];
-                    // Prefer eventEPA if available, otherwise use historicEPA
-                    teamEPAs[teamNum] = teamEPA.eventEPA || teamEPA.historicEPA || 50.0;
+
+        if (teams.length === 0 && matches.length > 0) {
+            const teamsByNumber = new Map();
+            matches.forEach(match => {
+                (match.teams || []).forEach(teamEntry => {
+                    if (teamEntry == null) {
+                        return;
+                    }
+                    if (typeof teamEntry === 'number' || typeof teamEntry === 'string') {
+                        const teamNumber = Number(teamEntry);
+                        if (!Number.isNaN(teamNumber) && !teamsByNumber.has(teamNumber)) {
+                            teamsByNumber.set(teamNumber, { teamNumber });
+                        }
+                        return;
+                    }
+                    const teamNumber = teamEntry.teamNumber;
+                    if (teamNumber == null) {
+                        return;
+                    }
+                    const normalizedNumber = Number(teamNumber);
+                    if (Number.isNaN(normalizedNumber)) {
+                        return;
+                    }
+                    if (!teamsByNumber.has(normalizedNumber)) {
+                        teamsByNumber.set(normalizedNumber, {
+                            ...teamEntry,
+                            teamNumber: normalizedNumber
+                        });
+                    }
                 });
+            });
+            teams = Array.from(teamsByNumber.values());
+            console.log('Teams derived from matches:', teams.length, 'teams');
+        }
+        
+        // Get EPAs from EPA API (prefer teams list from Events API)
+        const teamEPAs = {};
+        const teamNumbers = [
+            ...new Set(
+                teams
+                    .map(team => Number(team.teamNumber))
+                    .filter(teamNumber => !Number.isNaN(teamNumber))
+            )
+        ];
+
+        try {
+            if (teamNumbers.length > 0) {
+                const epaResponse = await this.axiosInstance.get('/api/epa', {
+                    params: { teams: teamNumbers.join(','), season }
+                });
+                const epaData = epaResponse?.data;
+                if (epaData?.success && Array.isArray(epaData.teams)) {
+                    epaData.teams.forEach(teamResult => {
+                        const teamNumber = Number(teamResult.teamNumber);
+                        if (Number.isNaN(teamNumber)) {
+                            return;
+                        }
+                        const historicEPA = teamResult.historicEPA;
+                        const historicValue = typeof historicEPA === 'object'
+                            ? historicEPA?.historicEPA
+                            : historicEPA;
+                        teamEPAs[teamNumber.toString()] = historicValue ?? 50.0;
+                    });
+                } else {
+                    throw new Error('Invalid EPA response for team list');
+                }
+            } else {
+                const epaResponse = await this.getEventTeamEPAs(eventCode, season);
+                if (epaResponse && epaResponse.success && epaResponse.teamEPAs) {
+                    // Convert new EPA format to legacy format for compatibility
+                    Object.keys(epaResponse.teamEPAs).forEach(teamNum => {
+                        const teamEPA = epaResponse.teamEPAs[teamNum];
+                        // Prefer eventEPA if available, otherwise use historicEPA
+                        teamEPAs[teamNum] = teamEPA.eventEPA || teamEPA.historicEPA || 50.0;
+                    });
+                }
             }
         } catch (epaError) {
             console.warn('Failed to get EPAs, using defaults:', epaError);
             // Set default EPAs for teams
             teams.forEach(team => {
-                teamEPAs[team.teamNumber.toString()] = 50.0;
+                if (team.teamNumber !== undefined && team.teamNumber !== null) {
+                    teamEPAs[team.teamNumber.toString()] = 50.0;
+                }
             });
         }
         

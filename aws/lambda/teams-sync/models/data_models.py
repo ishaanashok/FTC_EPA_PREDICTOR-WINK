@@ -51,6 +51,7 @@ class Team(DynamoDBBaseModel):
     country: str = Field("", description="Country")
     rookieYear: Optional[int] = Field(None, description="Rookie year")
     website: Optional[str] = Field(None, description="Team website")
+    matchCount: int = Field(0, description="Matches played in season")
     
     # Metadata
     lastUpdated: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -143,6 +144,7 @@ def convert_ftc_api_team(api_team: Dict[str, Any], season: int) -> Team:
         'country': safe_string(api_team.get('country')),
         'rookieYear': rookie_year_int,
         'website': safe_string(api_team.get('website')) if api_team.get('website') else None,
+        'matchCount': 0,
         'lastUpdated': datetime.now(timezone.utc),
         # Set all optional caching fields to None explicitly
         'lastModified': None,

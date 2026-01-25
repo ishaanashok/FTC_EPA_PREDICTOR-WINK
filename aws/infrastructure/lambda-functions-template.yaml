@@ -1,0 +1,477 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Lambda Functions for FTC-Predictor with IAM Roles and Permissions'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: stage
+    AllowedValues:
+      - dev
+      - stage
+      - prod
+    Description: Environment name for resource naming
+
+Resources:
+  # ============================================================================
+  # IAM Role for Lambda Functions
+  # ============================================================================
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'ftc-lambda-execution-role-${Environment}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                  - dynamodb:BatchGetItem
+                  - dynamodb:BatchWriteItem
+                  - dynamodb:DescribeTable
+                Resource:
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/FTC_Teams_${Environment}'
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/FTC_Teams_${Environment}/index/*'
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/FTC_Events_${Environment}'
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/FTC_Events_${Environment}/index/*'
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/FTC_Matches_${Environment}'
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/FTC_Matches_${Environment}/index/*'
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/FTC_TeamMatchEPA_${Environment}'
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/FTC_TeamMatchEPA_${Environment}/index/*'
+        - PolicyName: SecretsManagerAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:*'
+        - PolicyName: CloudWatchLogs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*'
+
+  # ============================================================================
+  # Teams API Lambda
+  # ============================================================================
+  TeamsApiFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'ftc-teams-api-${Environment}'
+      Runtime: python3.11
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 30
+      MemorySize: 512
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+      Code:
+        ZipFile: |
+          def lambda_handler(event, context):
+              return {
+                  'statusCode': 200,
+                  'body': 'Placeholder - deploy actual code'
+              }
+      Description: 'Teams API - Returns team data with embedded historicEPA'
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: FTC-Predictor
+
+  TeamsApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/ftc-teams-api-${Environment}'
+      RetentionInDays: 7
+
+  # ============================================================================
+  # EPA API Lambda (NEW)
+  # ============================================================================
+  EpaApiFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'ftc-epa-api-${Environment}'
+      Runtime: python3.11
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 30
+      MemorySize: 512
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+      Code:
+        ZipFile: |
+          def lambda_handler(event, context):
+              return {
+                  'statusCode': 200,
+                  'body': 'Placeholder - deploy actual code'
+              }
+      Description: 'EPA API - Comprehensive EPA endpoints (historic, season, event)'
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: FTC-Predictor
+
+  EpaApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/ftc-epa-api-${Environment}'
+      RetentionInDays: 7
+
+  # ============================================================================
+  # Events API Lambda
+  # ============================================================================
+  EventsApiFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'ftc-events-api-${Environment}'
+      Runtime: python3.11
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 30
+      MemorySize: 512
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+      Code:
+        ZipFile: |
+          def lambda_handler(event, context):
+              return {
+                  'statusCode': 200,
+                  'body': 'Placeholder - deploy actual code'
+              }
+      Description: 'Events API - Returns event data'
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: FTC-Predictor
+
+  EventsApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/ftc-events-api-${Environment}'
+      RetentionInDays: 7
+
+  # ============================================================================
+  # Matches API Lambda
+  # ============================================================================
+  MatchesApiFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'ftc-matches-api-${Environment}'
+      Runtime: python3.11
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 30
+      MemorySize: 512
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+      Code:
+        ZipFile: |
+          def lambda_handler(event, context):
+              return {
+                  'statusCode': 200,
+                  'body': 'Placeholder - deploy actual code'
+              }
+      Description: 'Matches API - Returns match data with win probabilities'
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: FTC-Predictor
+
+  MatchesApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/ftc-matches-api-${Environment}'
+      RetentionInDays: 7
+
+  # ============================================================================
+  # Alliance Matchmaker Lambda
+  # ============================================================================
+  AllianceMatchmakerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'ftc-alliance-matchmaker-${Environment}'
+      Runtime: python3.11
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 60
+      MemorySize: 1024
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+      Code:
+        ZipFile: |
+          def lambda_handler(event, context):
+              return {
+                  'statusCode': 200,
+                  'body': 'Placeholder - deploy actual code'
+              }
+      Description: 'Alliance Matchmaker - Finds optimal alliance partners'
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: FTC-Predictor
+
+  AllianceMatchmakerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/ftc-alliance-matchmaker-${Environment}'
+      RetentionInDays: 7
+
+  # ============================================================================
+  # Teams Sync Lambda
+  # ============================================================================
+  TeamsSyncFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'ftc-teams-sync-${Environment}'
+      Runtime: python3.11
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 300
+      MemorySize: 1024
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          FTC_API_USERNAME: '{{resolve:secretsmanager:ftc-api-credentials:SecretString:username}}'
+          FTC_API_TOKEN: '{{resolve:secretsmanager:ftc-api-credentials:SecretString:token}}'
+      Code:
+        ZipFile: |
+          def lambda_handler(event, context):
+              return {
+                  'statusCode': 200,
+                  'body': 'Placeholder - deploy actual code'
+              }
+      Description: 'Teams Sync - Syncs team data from FTC API to DynamoDB'
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: FTC-Predictor
+
+  TeamsSyncLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/ftc-teams-sync-${Environment}'
+      RetentionInDays: 7
+
+  # ============================================================================
+  # Events Sync Lambda
+  # ============================================================================
+  EventsSyncFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'ftc-events-sync-${Environment}'
+      Runtime: python3.11
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 300
+      MemorySize: 1024
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          FTC_API_USERNAME: '{{resolve:secretsmanager:ftc-api-credentials:SecretString:username}}'
+          FTC_API_TOKEN: '{{resolve:secretsmanager:ftc-api-credentials:SecretString:token}}'
+      Code:
+        ZipFile: |
+          def lambda_handler(event, context):
+              return {
+                  'statusCode': 200,
+                  'body': 'Placeholder - deploy actual code'
+              }
+      Description: 'Events Sync - Syncs event data from FTC API to DynamoDB'
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: FTC-Predictor
+
+  EventsSyncLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/ftc-events-sync-${Environment}'
+      RetentionInDays: 7
+
+  # ============================================================================
+  # Upcoming Events Sync Lambda
+  # ============================================================================
+  EventsUpcomingSyncFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'ftc-events-upcoming-sync-${Environment}'
+      Runtime: python3.11
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 300
+      MemorySize: 1024
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          SECRETS_NAME: !Sub 'FTC-API-Credentials-${Environment}'
+          LOOKAHEAD_DAYS: '30'
+      Code:
+        ZipFile: |
+          def lambda_handler(event, context):
+              return {
+                  'statusCode': 200,
+                  'body': 'Placeholder - deploy actual code'
+              }
+      Description: 'Upcoming Events Sync - Adds new scheduled events in next 30 days'
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: FTC-Predictor
+
+  EventsUpcomingSyncLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/ftc-events-upcoming-sync-${Environment}'
+      RetentionInDays: 7
+
+  EventsUpcomingSyncRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub 'ftc-events-upcoming-sync-${Environment}'
+      Description: 'Run upcoming events sync daily'
+      ScheduleExpression: rate(1 day)
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt EventsUpcomingSyncFunction.Arn
+          Id: EventsUpcomingSyncTarget
+
+  EventsUpcomingSyncPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt EventsUpcomingSyncFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt EventsUpcomingSyncRule.Arn
+
+  # ============================================================================
+  # Matches Sync Lambda
+  # ============================================================================
+  MatchesSyncFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'ftc-matches-sync-${Environment}'
+      Runtime: python3.11
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 300
+      MemorySize: 1024
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          FTC_API_USERNAME: '{{resolve:secretsmanager:ftc-api-credentials:SecretString:username}}'
+          FTC_API_TOKEN: '{{resolve:secretsmanager:ftc-api-credentials:SecretString:token}}'
+      Code:
+        ZipFile: |
+          def lambda_handler(event, context):
+              return {
+                  'statusCode': 200,
+                  'body': 'Placeholder - deploy actual code'
+              }
+      Description: 'Matches Sync - Syncs match data from FTC API to DynamoDB'
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: FTC-Predictor
+
+  MatchesSyncLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/ftc-matches-sync-${Environment}'
+      RetentionInDays: 7
+
+Outputs:
+  LambdaExecutionRoleArn:
+    Description: ARN of the Lambda execution role
+    Value: !GetAtt LambdaExecutionRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-LambdaExecutionRoleArn'
+
+  TeamsApiFunctionArn:
+    Description: ARN of Teams API Lambda function
+    Value: !GetAtt TeamsApiFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-TeamsApiFunctionArn'
+
+  EpaApiFunctionArn:
+    Description: ARN of EPA API Lambda function
+    Value: !GetAtt EpaApiFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-EpaApiFunctionArn'
+
+  EventsApiFunctionArn:
+    Description: ARN of Events API Lambda function
+    Value: !GetAtt EventsApiFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-EventsApiFunctionArn'
+
+  MatchesApiFunctionArn:
+    Description: ARN of Matches API Lambda function
+    Value: !GetAtt MatchesApiFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-MatchesApiFunctionArn'
+
+  AllianceMatchmakerFunctionArn:
+    Description: ARN of Alliance Matchmaker Lambda function
+    Value: !GetAtt AllianceMatchmakerFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-AllianceMatchmakerFunctionArn'
+
+  TeamsSyncFunctionArn:
+    Description: ARN of Teams Sync Lambda function
+    Value: !GetAtt TeamsSyncFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-TeamsSyncFunctionArn'
+
+  EventsSyncFunctionArn:
+    Description: ARN of Events Sync Lambda function
+    Value: !GetAtt EventsSyncFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-EventsSyncFunctionArn'
+
+  EventsUpcomingSyncFunctionArn:
+    Description: ARN of Upcoming Events Sync Lambda function
+    Value: !GetAtt EventsUpcomingSyncFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-EventsUpcomingSyncFunctionArn'
+
+  MatchesSyncFunctionArn:
+    Description: ARN of Matches Sync Lambda function
+    Value: !GetAtt MatchesSyncFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-MatchesSyncFunctionArn'
+

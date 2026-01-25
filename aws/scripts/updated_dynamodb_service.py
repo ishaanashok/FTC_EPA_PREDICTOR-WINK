@@ -223,24 +223,6 @@ class DynamoDBService:
         except ClientError as e:
             logger.error(f"Error batch saving teams: {str(e)}")
             return False
-
-    def increment_team_match_count(self, team_number: int, season: int, increment: int = 1) -> bool:
-        """Increment matchCount for a team-season record"""
-        try:
-            self.teams_table.update_item(
-                Key={'teamNumber': int(team_number), 'season': int(season)},
-                UpdateExpression="SET matchCount = if_not_exists(matchCount, :zero) + :inc",
-                ExpressionAttributeValues={
-                    ':zero': 0,
-                    ':inc': int(increment)
-                }
-            )
-            return True
-        except ClientError as e:
-            logger.error(
-                f"Error updating matchCount for team {team_number}, season {season}: {str(e)}"
-            )
-            return False
     
     # ========================================================================
     # EVENT OPERATIONS (Updated for new schema)
@@ -277,26 +259,6 @@ class DynamoDBService:
         except ClientError as e:
             logger.error(f"Error getting event {event_code} for season {season}: {str(e)}")
             return None
-
-    def update_event_teams(self, event_id: str, teams: List[Dict[str, Any]]) -> bool:
-        """Update teams list for an existing event record"""
-        try:
-            update_payload = self.convert_to_dynamodb_item({
-                "teams": teams,
-                "teamsUpdatedAt": datetime.now(timezone.utc).isoformat()
-            })
-            self.events_table.update_item(
-                Key={'eventId': event_id},
-                UpdateExpression="SET teams = :teams, teamsUpdatedAt = :updatedAt",
-                ExpressionAttributeValues={
-                    ':teams': update_payload['teams'],
-                    ':updatedAt': update_payload['teamsUpdatedAt']
-                }
-            )
-            return True
-        except ClientError as e:
-            logger.error(f"Error updating teams for event {event_id}: {str(e)}")
-            return False
     
     def get_events_by_season(self, season: int, limit: Optional[int] = None) -> List[Dict[str, Any]]:
         """Get all events for a season using SeasonDateIndex (sorted by date)"""
@@ -360,42 +322,6 @@ class DynamoDBService:
             
         except ClientError as e:
             logger.error(f"Error getting events for region {region_code}, season {season}: {str(e)}")
-            return []
-    
-    def get_events_by_team(self, season: int, team_number: int) -> List[Dict[str, Any]]:
-        """
-        Get all events that a team participated in for a given season.
-        This queries the TeamMatchEPA table to find all events the team played in,
-        then fetches the event details.
-        """
-        try:
-            # Query TeamMatchEPA table to find all matches for this team in this season
-            response = self.team_match_epa_table.query(
-                IndexName='TeamSeasonIndex',
-                KeyConditionExpression=Key('teamNumber').eq(int(team_number)) & Key('season').eq(season)
-            )
-            
-            # Extract unique event codes from the matches
-            event_codes = set()
-            for item in response.get('Items', []):
-                event_code = item.get('eventCode')
-                if event_code and event_code != 'UNKNOWN':
-                    event_codes.add(event_code)
-            
-            # Fetch event details for each unique event code
-            events = []
-            for event_code in event_codes:
-                event = self.get_event(event_code, season)
-                if event:
-                    events.append(event)
-            
-            # Sort events by start date
-            events.sort(key=lambda e: e.get('dateStart', ''))
-            
-            return events
-            
-        except ClientError as e:
-            logger.error(f"Error getting events for team {team_number}, season {season}: {str(e)}")
             return []
     
     def save_event(self, event_data: Dict[str, Any]) -> bool:
@@ -942,48 +868,13 @@ class DynamoDBService:
         # Extract unique team numbers
         team_numbers = set()
         for match in matches:
-            match_team_numbers = match.get('teamNumbers')
-            if match_team_numbers:
-                if isinstance(match_team_numbers, str):
-                    split_numbers = [tn.strip() for tn in match_team_numbers.split(',') if tn.strip()]
-                    team_numbers.update(int(tn) for tn in split_numbers)
-                else:
-                    # Convert to int to handle both Decimal and float types
-                    team_numbers.update(int(tn) for tn in match_team_numbers)
-            
-            all_teams = match.get('allTeams') or []
-            team_numbers.update(int(tn) for tn in all_teams)
-            
-            red_teams = match.get('redTeams') or []
-            blue_teams = match.get('blueTeams') or []
-            team_numbers.update(int(tn) for tn in red_teams)
-            team_numbers.update(int(tn) for tn in blue_teams)
-            
-            team_entries = match.get('teams') or []
-            for team_entry in team_entries:
-                if isinstance(team_entry, dict):
-                    team_number = team_entry.get('teamNumber')
-                    if team_number is not None:
-                        team_numbers.add(int(team_number))
-                elif team_entry is not None:
-                    team_numbers.add(int(team_entry))
-        
-        # Fallback: check event record for team numbers if matches did not provide any
-        if not team_numbers:
-            event = self.get_event(event_code, season)
-            event_team_numbers = event.get('teamNumbers') if event else None
-            if event_team_numbers:
-                if isinstance(event_team_numbers, str):
-                    split_numbers = [tn.strip() for tn in event_team_numbers.split(',') if tn.strip()]
-                    team_numbers.update(int(tn) for tn in split_numbers)
-                else:
-                    team_numbers.update(int(tn) for tn in event_team_numbers)
+            if 'teamNumbers' in match:
+                team_numbers.update(match['teamNumbers'])
         
         # Get team details
         teams = []
         for team_number in team_numbers:
-            # Ensure team_number is an integer
-            team = self.get_team(int(team_number), season)
+            team = self.get_team(team_number, season)
             if team:
                 teams.append(team)
         

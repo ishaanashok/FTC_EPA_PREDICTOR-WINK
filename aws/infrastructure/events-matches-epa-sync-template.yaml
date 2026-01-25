@@ -1,0 +1,103 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Events Matches+EPA Sync Lambda (standalone stack)'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: stage
+    AllowedValues:
+      - dev
+      - stage
+      - prod
+    Description: Environment name for resource naming
+  SecretsName:
+    Type: String
+    Default: FTC-API-Credentials-stage
+    Description: Secrets Manager name for FTC API credentials
+  RoleName:
+    Type: String
+    Default: FTC-Lambda-Role-stage
+    Description: Existing IAM role name for the Lambda function
+  UpcomingWindowHours:
+    Type: Number
+    Default: 24
+    Description: Upcoming window in hours for temp schedule
+  Season:
+    Type: Number
+    Default: 2025
+    Description: FTC season year
+
+Resources:
+  EventsMatchesEpaSyncFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'ftc-events-matches-epa-sync-${Environment}'
+      Runtime: python3.11
+      Handler: lambda_function.lambda_handler
+      Role: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${RoleName}'
+      Timeout: 900
+      MemorySize: 1024
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          SECRETS_NAME: !Ref SecretsName
+          DAILY_RULE_NAME: !Sub 'ftc-events-matches-epa-sync-daily-${Environment}'
+          TEMP_RULE_NAME: !Sub 'ftc-events-matches-epa-sync-temp-${Environment}'
+          UPCOMING_WINDOW_HOURS: !Ref UpcomingWindowHours
+          SEASON: !Ref Season
+      Code:
+        ZipFile: |
+          def lambda_handler(event, context):
+              return {
+                  'statusCode': 200,
+                  'body': 'Placeholder - deploy actual code'
+              }
+      Description: 'Events matches/EPA sync for previous day and active events'
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: FTC-Predictor
+
+  EventsMatchesEpaSyncDailyRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub 'ftc-events-matches-epa-sync-daily-${Environment}'
+      Description: 'Run daily to sync previous-day events'
+      ScheduleExpression: rate(1 day)
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt EventsMatchesEpaSyncFunction.Arn
+          Id: EventsMatchesEpaSyncDailyTarget
+
+  EventsMatchesEpaSyncTempRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub 'ftc-events-matches-epa-sync-temp-${Environment}'
+      Description: 'Temporary 30-min sync while events active'
+      ScheduleExpression: rate(30 minutes)
+      State: DISABLED
+      Targets:
+        - Arn: !GetAtt EventsMatchesEpaSyncFunction.Arn
+          Id: EventsMatchesEpaSyncTempTarget
+
+  EventsMatchesEpaSyncDailyPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt EventsMatchesEpaSyncFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt EventsMatchesEpaSyncDailyRule.Arn
+
+  EventsMatchesEpaSyncTempPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt EventsMatchesEpaSyncFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt EventsMatchesEpaSyncTempRule.Arn
+
+Outputs:
+  EventsMatchesEpaSyncFunctionArn:
+    Description: ARN of Events Matches/EPA Sync Lambda function
+    Value: !GetAtt EventsMatchesEpaSyncFunction.Arn

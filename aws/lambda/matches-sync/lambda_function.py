@@ -66,6 +66,63 @@ class MatchesSyncService:
         except Exception as e:
             logger.error(f"Failed to initialize FTC API service: {str(e)}")
             raise
+
+    def _match_has_scores(self, match_data: Dict[str, Any]) -> bool:
+        """Return True when a match has non-zero final scores."""
+        if not match_data:
+            return False
+
+        def _score_total(score):
+            if not score:
+                return 0
+            if isinstance(score, dict):
+                return score.get('totalPoints', 0) or 0
+            return getattr(score, 'totalPoints', 0) or 0
+
+        red_score = _score_total(match_data.get('redScore')) or match_data.get('scoreRedFinal', 0) or 0
+        blue_score = _score_total(match_data.get('blueScore')) or match_data.get('scoreBlueFinal', 0) or 0
+
+        return (red_score or 0) > 0 or (blue_score or 0) > 0
+
+    def _extract_match_team_numbers(self, match_data: Dict[str, Any]) -> List[int]:
+        """Extract team numbers from match data."""
+        team_numbers = set()
+
+        for team in match_data.get('allTeams', []) or []:
+            team_numbers.add(int(team))
+
+        for team in match_data.get('redTeams', []) or []:
+            team_numbers.add(int(team))
+
+        for team in match_data.get('blueTeams', []) or []:
+            team_numbers.add(int(team))
+
+        for team_entry in match_data.get('teams', []) or []:
+            team_number = team_entry.get('teamNumber')
+            if team_number is not None:
+                team_numbers.add(int(team_number))
+
+        return sorted(team_numbers)
+
+    def _should_increment_match_count(self, existing_match: Optional[Dict[str, Any]],
+                                      new_match: Dict[str, Any]) -> bool:
+        """Increment when match transitions from no scores to scored."""
+        new_has_scores = self._match_has_scores(new_match)
+        old_has_scores = self._match_has_scores(existing_match)
+        return new_has_scores and not old_has_scores
+
+    def _increment_match_counts(self, match_data: Dict[str, Any], season: int) -> None:
+        """Increment matchCount for all teams in the match."""
+        team_numbers = self._extract_match_team_numbers(match_data)
+        if not team_numbers:
+            return
+
+        for team_number in team_numbers:
+            updated = self.db_service.increment_team_match_count(team_number, season, 1)
+            if not updated:
+                logger.warning(
+                    f"Failed to increment matchCount for team {team_number}, season {season}"
+                )
     
     async def create_sync_status(self, sync_type: str, season: int, event_code: Optional[str] = None, match_number: Optional[int] = None) -> SyncStatus:
         """Create a new sync status record"""
@@ -170,9 +227,13 @@ class MatchesSyncService:
                 
                 # Save match to DynamoDB
                 match_dict = match.model_dump() if hasattr(match, 'model_dump') else match.dict()
+                existing_match = self.db_service.get_match(match.matchId)
                 success = self.db_service.save_match(match_dict)
                 
                 if success:
+                    if self._should_increment_match_count(existing_match, match_dict):
+                        self._increment_match_counts(match_dict, season)
+
                     sync_status.status = "completed"
                     sync_status.recordsProcessed = 1
                     sync_status.recordsUpdated = 1
@@ -249,6 +310,7 @@ class MatchesSyncService:
             for i in range(0, len(matches_data), batch_size):
                 batch = matches_data[i:i + batch_size]
                 batch_matches = []
+                scored_matches_to_increment = []
                 
                 for match_data in batch:
                     try:
@@ -262,6 +324,9 @@ class MatchesSyncService:
                         
                         # Always update matches (overwrite existing records)
                         match_dict = match.model_dump() if hasattr(match, 'model_dump') else match.dict()
+                        existing_match = self.db_service.get_match(match.matchId)
+                        if self._should_increment_match_count(existing_match, match_dict):
+                            scored_matches_to_increment.append(match_dict)
                         batch_matches.append(match_dict)
                         matches_updated += 1
                         
@@ -276,6 +341,9 @@ class MatchesSyncService:
                     success = self.db_service.batch_save_matches(batch_matches)
                     if not success:
                         logger.error(f"Failed to save batch of {len(batch_matches)} matches")
+                    else:
+                        for scored_match in scored_matches_to_increment:
+                            self._increment_match_counts(scored_match, season)
                 
                 # Update progress
                 if matches_processed % 25 == 0:
