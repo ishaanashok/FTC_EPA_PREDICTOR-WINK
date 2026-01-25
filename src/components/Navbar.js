@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   AppBar,
   Toolbar,
@@ -6,6 +6,8 @@ import {
   Button,
   Box,
   IconButton,
+  Menu,
+  MenuItem,
   useTheme,
   useMediaQuery,
 } from '@mui/material';
@@ -15,6 +17,16 @@ import { Link as RouterLink } from 'react-router-dom';
 function Navbar() {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  const [menuAnchorEl, setMenuAnchorEl] = useState(null);
+  const isMenuOpen = Boolean(menuAnchorEl);
+
+  const handleMenuOpen = (event) => {
+    setMenuAnchorEl(event.currentTarget);
+  };
+
+  const handleMenuClose = () => {
+    setMenuAnchorEl(null);
+  };
 
   return (
     <AppBar position="static">
@@ -45,9 +57,32 @@ function Navbar() {
         </Box>
 
         {isMobile ? (
-          <IconButton color="inherit">
+          <>
+            <IconButton
+              color="inherit"
+              aria-label="open navigation menu"
+              onClick={handleMenuOpen}
+            >
             <MenuIcon />
           </IconButton>
+            <Menu
+              anchorEl={menuAnchorEl}
+              open={isMenuOpen}
+              onClose={handleMenuClose}
+              anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+              transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+            >
+              <MenuItem component={RouterLink} to="/" onClick={handleMenuClose}>
+                Home
+              </MenuItem>
+              <MenuItem component={RouterLink} to="/teams" onClick={handleMenuClose}>
+                Teams
+              </MenuItem>
+              <MenuItem component={RouterLink} to="/events" onClick={handleMenuClose}>
+                Events
+              </MenuItem>
+            </Menu>
+          </>
         ) : (
           <Box sx={{ display: 'flex', gap: 2 }}>
             <Button color="inherit" component={RouterLink} to="/">

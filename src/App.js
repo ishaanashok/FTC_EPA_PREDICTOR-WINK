@@ -1,5 +1,5 @@
-import React from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import React, { useEffect } from 'react';
+import { BrowserRouter as Router, Routes, Route, useLocation } from 'react-router-dom';
 import Teams from './pages/teams';
 import Events from './pages/Events';
 import EventDetails from './pages/EventDetails';
@@ -15,12 +15,26 @@ import { theme } from './theme/theme';
 import CssBaseline from '@mui/material/CssBaseline';
 import './aws-config'; // Initialize AWS Amplify configuration
 
+function RouteChangeTracker() {
+  const location = useLocation();
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && typeof window.gtag === 'function') {
+      const pagePath = `${location.pathname}${location.search}${location.hash}`;
+      window.gtag('config', 'G-WWZH9P80V8', { page_path: pagePath });
+    }
+  }, [location.pathname, location.search, location.hash]);
+
+  return null;
+}
+
 function App() {
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <Router>
         <div className="App">
+          <RouteChangeTracker />
           <Navbar />
           <Routes>
             <Route path="/" element={<Home />} />

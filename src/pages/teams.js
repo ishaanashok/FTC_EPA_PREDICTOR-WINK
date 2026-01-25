@@ -13,7 +13,6 @@ function Teams() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [teamNumber, setTeamNumber] = useState('');
-    const [teamName, setTeamName] = useState('');
     const [currentPage, setCurrentPage] = useState(1);
     const [allTeams, setAllTeams] = useState([]);
 
@@ -27,8 +26,6 @@ function Teams() {
         const searchParams = {};
         if (teamNumber) {
             searchParams.teamNumber = teamNumber;
-        } else if (teamName) {
-            searchParams.search = teamName;
         }
         await fetchTeams(searchParams);
     };
@@ -82,18 +79,6 @@ function Teams() {
                             value={teamNumber}
                             onChange={(e) => {
                                 setTeamNumber(e.target.value);
-                                setTeamName('');
-                            }}
-                            onKeyPress={handleKeyPress}
-                            className="search-filter"
-                        />
-                        <input
-                            type="text"
-                            placeholder="Search by team name"
-                            value={teamName}
-                            onChange={(e) => {
-                                setTeamName(e.target.value);
-                                setTeamNumber('');
                             }}
                             onKeyPress={handleKeyPress}
                             className="search-filter"
@@ -101,7 +86,7 @@ function Teams() {
                         <Button
                             variant="contained"
                             onClick={handleSearch}
-                            disabled={!teamNumber && !teamName}
+                            disabled={!teamNumber}
                             className="search-button"
                         >
                             Search
