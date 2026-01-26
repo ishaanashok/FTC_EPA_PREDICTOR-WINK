@@ -205,7 +205,7 @@ function Events() {
       getEventState(event).toLowerCase().includes(searchText.toLowerCase());
     
     const status = getStatusLabel(event.dateStart, event.dateEnd).toLowerCase();
-    const matchesFilter = filter === 'all' || status === filter.toLowerCase();
+    const matchesFilter = status === filter.toLowerCase();
 
     return matchesSearch && matchesFilter;
   }).sort((a, b) => {
@@ -233,7 +233,7 @@ function Events() {
                 label="Filter by Status"
               >
                 <MenuItem value="upcoming">Upcoming Events</MenuItem>
-                <MenuItem value="all">All Events</MenuItem>
+                <MenuItem value="in progress">Ongoing Events</MenuItem>
                 <MenuItem value="past">Past Events</MenuItem>
               </Select>
             </FormControl>
