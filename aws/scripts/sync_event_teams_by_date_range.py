@@ -42,8 +42,8 @@ def _resolve_date_range(
     end_date: Optional[str],
     days: int,
 ) -> Tuple[str, str]:
-    resolved_end = _parse_date(end_date) if end_date else datetime.utcnow().date()
-    resolved_start = _parse_date(start_date) if start_date else resolved_end - timedelta(days=days - 1)
+    resolved_start = _parse_date(start_date) if start_date else datetime.utcnow().date()
+    resolved_end = _parse_date(end_date) if end_date else resolved_start + timedelta(days=days - 1)
     if resolved_start > resolved_end:
         raise ValueError("start_date must be <= end_date")
     return resolved_start.isoformat(), resolved_end.isoformat()

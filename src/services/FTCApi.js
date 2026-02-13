@@ -462,6 +462,32 @@ class FTCApi {
         if (teams.length > 0) {
             console.log('Teams fetched from Events API:', teams.length, 'teams');
         }
+
+        const needsTeamDetails = teams.length === 0 || teams.every(team => {
+            if (!team || typeof team !== 'object') {
+                return true;
+            }
+            return !(
+                team.teamName ||
+                team.nameShort ||
+                team.nameFull ||
+                team.organization ||
+                team.city ||
+                team.stateProv ||
+                team.state ||
+                team.country
+            );
+        });
+
+        if (needsTeamDetails) {
+            try {
+                const teamsResponse = await this.getTeams(season, { eventCode });
+                teams = Array.isArray(teamsResponse?.teams) ? teamsResponse.teams : [];
+                console.log('Teams fetched from Teams API:', teams.length, 'teams');
+            } catch (teamError) {
+                console.warn('Failed to get teams from Teams API:', teamError);
+            }
+        }
         
         // Get matches for the event
         let matches = [];

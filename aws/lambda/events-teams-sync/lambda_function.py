@@ -34,13 +34,13 @@ def _resolve_date_range(
     end_date: Optional[str],
     days_back: int,
 ) -> Tuple[date, date]:
-    range_end = _parse_date(end_date) if end_date else datetime.now(timezone.utc).date()
-    if start_date:
-        range_start = _parse_date(start_date)
-        if not range_start:
-            raise ValueError("startDate must be a valid ISO date (YYYY-MM-DD)")
+    range_start = _parse_date(start_date) if start_date else datetime.now(timezone.utc).date()
+    if end_date:
+        range_end = _parse_date(end_date)
+        if not range_end:
+            raise ValueError("endDate must be a valid ISO date (YYYY-MM-DD)")
     else:
-        range_start = range_end - timedelta(days=max(days_back - 1, 0))
+        range_end = range_start + timedelta(days=max(days_back - 1, 0))
     if not range_start:
         raise ValueError("startDate must be a valid ISO date (YYYY-MM-DD)")
     if range_start > range_end:

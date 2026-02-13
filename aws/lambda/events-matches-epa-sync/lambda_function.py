@@ -385,6 +385,17 @@ class EventsMatchesEpaSyncService:
                     for team_number in teams:
                         existing = self.db_service.get_team_match_epa(team_number, match_id)
                         if existing:
+                            # Update cache with existing record to keep cumulative state accurate
+                            state = _load_team_state(self.db_service, team_number, season, team_state_cache)
+                            match_epa = float(existing.get("matchEPA", 0) or 0)
+                            state["matchCount"] = int(existing.get("matchCount", state["matchCount"]))
+                            state["cumulativeEPA"] = float(existing.get("cumulativeEPA", state["cumulativeEPA"]) or 0)
+                            running = existing.get("runningAverages", {}) or {}
+                            matches_scored = int(running.get("matchesWithScores", state["matchesWithScores"]) or 0)
+                            state["matchesWithScores"] = matches_scored
+                            state["totalAuto"] = float(running.get("auto", 0) or 0) * matches_scored
+                            state["totalTeleop"] = float(running.get("teleop", 0) or 0) * matches_scored
+                            state["totalEndgame"] = float(running.get("endgame", 0) or 0) * matches_scored
                             continue
 
                         state = _load_team_state(self.db_service, team_number, season, team_state_cache)

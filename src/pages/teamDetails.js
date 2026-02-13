@@ -124,12 +124,11 @@ function TeamDetails() {
                             <p>Rookie Year: {teamInfo.rookieYear}</p>
                             {epa && epa !== 'N/A' && (
                                 <div className="team-epa">
-                                    <h3>EPA Statistics</h3>
+                                    <h3>EPA</h3>
                                     <div className="epa-details">
-                                        <p><strong>Historical EPA:</strong> {epa}</p>
+                                        <p><strong>EPA:</strong> {epa}</p>
                                         {epaDetails && (
                                             <>
-                                                <p><strong>Current Season EPA (2025):</strong> {epaDetails.currentSeasonEPA}</p>
                                                 <p><strong>Total Historical Matches:</strong> {epaDetails.totalMatches}</p>
                                                 <p><strong>Calculation Method:</strong> {epaDetails.dataQuality}</p>
                                                 {epaDetails.seasonsWithData && (

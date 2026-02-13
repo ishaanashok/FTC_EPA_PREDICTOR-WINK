@@ -44,14 +44,33 @@ const AllianceMatchmaker = ({ season, eventCode, teams, teamEPAs, matches = [] }
   const [winProbLoading, setWinProbLoading] = useState(false);
   const [winProbError, setWinProbError] = useState(null);
   
-  // Calculate team performance stats from matches
+  // Calculate team performance stats from EPA and match data
   const calculateTeamStats = (teamNum) => {
+    // Get EPA for this team - try multiple key formats
+    let epa = 0;
+    if (teamEPAs) {
+      epa = teamEPAs[teamNum.toString()] || 
+            teamEPAs[teamNum] || 
+            teamEPAs[`${teamNum}.0`] || 
+            0;
+    }
+    
     const teamMatches = matches.filter(match => 
       match.teams && match.teams.some(t => t.teamNumber === teamNum)
     );
     
     if (teamMatches.length === 0) {
-      return { auto: 0, teleop: 0, endgame: 0, totalMatches: 0 };
+      // Use EPA data as fallback - estimate stats from EPA
+      // If no EPA, use a baseline of 50
+      const baseEPA = Number(epa) || 50;
+      return { 
+        auto: Math.round(baseEPA * 0.25 * 10) / 10, 
+        teleop: Math.round(baseEPA * 0.55 * 10) / 10, 
+        endgame: Math.round(baseEPA * 0.20 * 10) / 10, 
+        totalMatches: 0,
+        fromEPA: true,
+        epaBased: baseEPA
+      };
     }
     
     let autoTotal = 0, teleopTotal = 0, endgameTotal = 0;
@@ -61,22 +80,30 @@ const AllianceMatchmaker = ({ season, eventCode, teams, teamEPAs, matches = [] }
       
       if (isRed) {
         autoTotal += match.scoreRedAuto || 0;
+        endgameTotal += match.scoreRedEnd || 0;
         // Teleop = Final - Auto - Endgame - Foul
-        const teleop = (match.scoreRedFinal || 0) - (match.scoreRedAuto || 0) - (match.scoreRedFoul || 0);
+        const teleop = (match.scoreRedFinal || 0) - (match.scoreRedAuto || 0) - (match.scoreRedEnd || 0) - (match.scoreRedFoul || 0);
         teleopTotal += Math.max(0, teleop);
       } else {
         autoTotal += match.scoreBlueAuto || 0;
-        const teleop = (match.scoreBlueFinal || 0) - (match.scoreBlueAuto || 0) - (match.scoreBlueFoul || 0);
+        endgameTotal += match.scoreBlueEnd || 0;
+        const teleop = (match.scoreBlueFinal || 0) - (match.scoreBlueAuto || 0) - (match.scoreBlueEnd || 0) - (match.scoreBlueFoul || 0);
         teleopTotal += Math.max(0, teleop);
       }
     });
     
-    // Average per match, divided by 2 for per-team contribution
+    // Average per match, divided by alliance size (2) for per-team contribution
+    const avgAuto = (autoTotal / teamMatches.length) / 2;
+    const avgTeleop = (teleopTotal / teamMatches.length) / 2;
+    const avgEndgame = (endgameTotal / teamMatches.length) / 2;
+    
     return {
-      auto: teamMatches.length > 0 ? (autoTotal / teamMatches.length) / 2 : 0,
-      teleop: teamMatches.length > 0 ? (teleopTotal / teamMatches.length) / 2 : 0,
-      endgame: 0, // We'll estimate endgame as part of teleop for now
-      totalMatches: teamMatches.length
+      auto: Math.round(avgAuto * 10) / 10,
+      teleop: Math.round(avgTeleop * 10) / 10,
+      endgame: Math.round(avgEndgame * 10) / 10,
+      totalMatches: teamMatches.length,
+      fromEPA: false,
+      epaBased: epa
     };
   };
   
@@ -93,58 +120,95 @@ const AllianceMatchmaker = ({ season, eventCode, teams, teamEPAs, matches = [] }
     const targetTeam = teams.find(t => t.teamNumber === targetTeamNumber);
     if (!targetTeam) return null;
     
-    // Get EPA for target team
-    const targetEPA = teamEPAs[targetTeamNumber.toString()] || teamEPAs[targetTeamNumber] || 50.0;
+    // Get EPA for target team - try multiple key formats
+    let targetEPA = 0;
+    if (teamEPAs) {
+      targetEPA = Number(teamEPAs[targetTeamNumber.toString()] || 
+                        teamEPAs[targetTeamNumber] || 
+                        teamEPAs[`${targetTeamNumber}.0`] || 
+                        0);
+    }
+    if (!targetEPA) targetEPA = 50; // Default baseline
     
     // Get target team's performance stats
     const targetStats = calculateTeamStats(targetTeamNumber);
     
-    // Calculate compatibility scores for all other teams
+    // Calculate scores for all potential partners
     const partners = teams
       .filter(t => t.teamNumber !== targetTeamNumber)
       .map(partner => {
-        const partnerEPA = teamEPAs[partner.teamNumber.toString()] || teamEPAs[partner.teamNumber] || 50.0;
+        // Get partner EPA - try multiple key formats
+        let partnerEPA = 0;
+        if (teamEPAs) {
+          partnerEPA = Number(teamEPAs[partner.teamNumber.toString()] || 
+                             teamEPAs[partner.teamNumber] || 
+                             teamEPAs[`${partner.teamNumber}.0`] || 
+                             0);
+        }
+        if (!partnerEPA) partnerEPA = 50; // Default baseline
+        
         const partnerStats = calculateTeamStats(partner.teamNumber);
         
-        // Calculate complementary scores
-        // Where your team is weak, partner should be strong
-        const autoComplement = targetStats.auto < 10 ? partnerStats.auto : 
-                               targetStats.auto > 20 ? Math.max(0, 30 - partnerStats.auto) : 
-                               partnerStats.auto * 0.5;
+        // Calculate complementary strength score
+        // Identify weak areas in your team and reward partner strength there
+        const targetTotal = targetStats.auto + targetStats.teleop + targetStats.endgame;
         
-        const teleopComplement = targetStats.teleop < 20 ? partnerStats.teleop :
-                                 targetStats.teleop > 40 ? Math.max(0, 60 - partnerStats.teleop) :
-                                 partnerStats.teleop * 0.5;
+        // Determine target team's weak areas (below 40% of total)
+        const targetAutoRatio = targetTotal > 0 ? targetStats.auto / targetTotal : 0;
+        const targetTeleopRatio = targetTotal > 0 ? targetStats.teleop / targetTotal : 0;
+        const targetEndgameRatio = targetTotal > 0 ? targetStats.endgame / targetTotal : 0;
         
-        // Combined EPA for overall strength
+        // Score partner strength in each category
+        // Heavily reward partners strong where target is weak
+        const autoComplementScore = targetAutoRatio < 0.25 ? 
+          (partnerStats.auto * 1.5) : 
+          partnerStats.auto * 0.5;
+        
+        const teleopComplementScore = targetTeleopRatio < 0.45 ? 
+          (partnerStats.teleop * 1.5) : 
+          partnerStats.teleop * 0.5;
+        
+        const endgameComplementScore = targetEndgameRatio < 0.25 ? 
+          (partnerStats.endgame * 1.5) : 
+          partnerStats.endgame * 0.5;
+        
+        // Overall compatibility = complementary strength + combined EPA
+        const complementScore = (autoComplementScore + teleopComplementScore + endgameComplementScore) / 3;
         const combinedEPA = targetEPA + partnerEPA;
         
-        // Compatibility score based on complementary strengths
-        // 40% complementary skills (auto + teleop) + 60% overall strength
-        const complementScore = (autoComplement + teleopComplement) / 2;
-        const compatibilityScore = (complementScore * 40) + (Math.min(combinedEPA, 120) * 0.5);
+        // Weighted score: 70% on EPA difference (to differentiate), 30% complementary fit
+        // Use both EPA values to create differentiation
+        const epaDifferential = Math.abs(targetEPA - partnerEPA); // Teams with different EPAs score higher
+        const compatibilityScore = (complementScore * 0.3) + ((combinedEPA / 100) * 50) + (epaDifferential * 0.3);
         
         return {
           teamNumber: partner.teamNumber,
           teamName: partner.nameShort || partner.nameFull || partner.teamName,
-          epa: partnerEPA,
-          combinedEPA: combinedEPA,
-          compatibilityScore: Math.round(compatibilityScore * 100) / 100, // Keep decimals for better sorting
-          // Partner stats
+          epa: Math.round(partnerEPA * 10) / 10,
+          combinedEPA: Math.round(combinedEPA * 10) / 10,
+          compatibilityScore: Math.round(compatibilityScore * 100) / 100,
+          // Partner stats - all detailed
           partnerAuto: partnerStats.auto,
           partnerTeleop: partnerStats.teleop,
           partnerEndgame: partnerStats.endgame,
+          partnerMatches: partnerStats.totalMatches,
           // Categorized for display
           autoCategory: categorizeScore(partnerStats.auto),
           teleopCategory: categorizeScore(partnerStats.teleop),
-          endgameCategory: categorizeScore(partnerStats.endgame)
+          endgameCategory: categorizeScore(partnerStats.endgame),
+          // Complementary bonus explanation
+          complementBonus: {
+            auto: targetAutoRatio < 0.25 ? 'HIGH' : 'NORMAL',
+            teleop: targetTeleopRatio < 0.45 ? 'HIGH' : 'NORMAL',
+            endgame: targetEndgameRatio < 0.25 ? 'HIGH' : 'NORMAL'
+          }
         };
       })
       .sort((a, b) => b.compatibilityScore - a.compatibilityScore);
     
     return {
       team: targetTeamNumber,
-      teamEPA: targetEPA,
+      teamEPA: Math.round(targetEPA * 10) / 10,
       teamStats: targetStats,
       teamAutoCategory: categorizeScore(targetStats.auto),
       teamTeleopCategory: categorizeScore(targetStats.teleop),
@@ -319,82 +383,179 @@ const AllianceMatchmaker = ({ season, eventCode, teams, teamEPAs, matches = [] }
   const CompatibilityCard = ({ match, index }) => {
     const team = teams.find(t => t.teamNumber === match.teamNumber);
     const teamName = match.teamName || team?.nameShort || team?.nameFull || `Team ${match.teamNumber}`;
-    const teamEPA = match.epa || 0;
+    
+    // Determine if this is a top match
+    const isTopMatch = index === 0;
+    
+    // Calculate the "synergy" bonus text
+    const synergyItems = [];
+    if (match.complementBonus?.auto === 'HIGH') {
+      synergyItems.push('Strong in Auto (your weak area)');
+    }
+    if (match.complementBonus?.teleop === 'HIGH') {
+      synergyItems.push('Strong in Teleop (your weakness)');
+    }
+    if (match.complementBonus?.endgame === 'HIGH') {
+      synergyItems.push('Strong in Endgame (your weak area)');
+    }
     
     return (
-      <Card elevation={3} sx={{ mb: 2, border: index === 0 ? '2px solid #4caf50' : 'none', cursor: 'pointer' }}
+      <Card 
+        elevation={isTopMatch ? 6 : 3} 
+        sx={{ 
+          mb: 2, 
+          border: isTopMatch ? '3px solid #4caf50' : '1px solid #e0e0e0',
+          cursor: 'pointer',
+          transition: 'all 0.3s ease',
+          '&:hover': {
+            transform: 'translateY(-2px)',
+            boxShadow: 6
+          }
+        }}
         onClick={() => handlePartnerClick(match)}
       >
         <CardHeader
           title={`#${match.teamNumber} - ${teamName}`}
-          subheader={`Compatibility Score: ${match.compatibilityScore.toFixed(1)}`}
+          subheader={
+            <Box sx={{ mt: 1 }}>
+              <Typography variant="body2" sx={{ fontWeight: 'bold', color: '#2196f3' }}>
+                Compatibility Score: {match.compatibilityScore.toFixed(2)}
+              </Typography>
+              <Typography variant="caption" color="textSecondary">
+                Combined EPA: {match.combinedEPA.toFixed(1)} | Partner EPA: {match.epa.toFixed(1)}
+              </Typography>
+            </Box>
+          }
           sx={{
-            backgroundColor: index === 0 ? '#e8f5e9' : 'inherit',
-            '& .MuiCardHeader-title': { fontWeight: 'bold' }
+            backgroundColor: isTopMatch ? '#e8f5e9' : '#f5f5f5',
+            '& .MuiCardHeader-title': { fontWeight: 'bold', color: isTopMatch ? '#2e7d32' : 'inherit' }
           }}
         />
         <CardContent>
-          <Box sx={{ mb: 2 }}>
-            <Typography variant="subtitle1" gutterBottom>
-              Combined EPA: {match.combinedEPA.toFixed(1)}
+          {/* Your Team Stats */}
+          <Box sx={{ mb: 3 }}>
+            <Typography variant="subtitle2" sx={{ fontWeight: 'bold', mb: 1, textDecoration: 'underline' }}>
+              Your Team (#{result?.team})
             </Typography>
-            <Typography variant="body2" color="textSecondary" gutterBottom>
-              Partner EPA: {match.epa.toFixed(1)} | Total Matches: {result?.teamStats?.totalMatches || 0}
-            </Typography>
+            <Grid container spacing={1}>
+              <Grid item xs={4}>
+                <Box sx={{ p: 1, backgroundColor: '#f0f0f0', borderRadius: 1, textAlign: 'center' }}>
+                  <Typography variant="caption" display="block" sx={{ fontWeight: 'bold' }}>Auto</Typography>
+                  <Typography variant="body2" sx={{ color: getColorForScore(result?.teamStats?.auto || 0), fontWeight: 'bold' }}>
+                    {(result?.teamStats?.auto || 0).toFixed(1)}
+                  </Typography>
+                  <Typography variant="caption" display="block">{result?.teamAutoCategory || 'N/A'}</Typography>
+                </Box>
+              </Grid>
+              <Grid item xs={4}>
+                <Box sx={{ p: 1, backgroundColor: '#f0f0f0', borderRadius: 1, textAlign: 'center' }}>
+                  <Typography variant="caption" display="block" sx={{ fontWeight: 'bold' }}>Teleop</Typography>
+                  <Typography variant="body2" sx={{ color: getColorForScore(result?.teamStats?.teleop || 0), fontWeight: 'bold' }}>
+                    {(result?.teamStats?.teleop || 0).toFixed(1)}
+                  </Typography>
+                  <Typography variant="caption" display="block">{result?.teamTeleopCategory || 'N/A'}</Typography>
+                </Box>
+              </Grid>
+              <Grid item xs={4}>
+                <Box sx={{ p: 1, backgroundColor: '#f0f0f0', borderRadius: 1, textAlign: 'center' }}>
+                  <Typography variant="caption" display="block" sx={{ fontWeight: 'bold' }}>Endgame</Typography>
+                  <Typography variant="body2" sx={{ color: getColorForScore(result?.teamStats?.endgame || 0), fontWeight: 'bold' }}>
+                    {(result?.teamStats?.endgame || 0).toFixed(1)}
+                  </Typography>
+                  <Typography variant="caption" display="block">{result?.teamEndgameCategory || 'N/A'}</Typography>
+                </Box>
+              </Grid>
+            </Grid>
           </Box>
-          
-          <Grid container spacing={2}>
-            <Grid item xs={6}>
-              <Typography variant="subtitle2" gutterBottom>Your Team</Typography>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                <Typography variant="body2">Auto:</Typography>
-                <Typography 
-                  variant="body2" 
-                  sx={{ fontWeight: 'bold', color: getColorForScore(result?.teamStats?.auto || 0) }}
-                >
-                  {(result?.teamStats?.auto || 0).toFixed(1)} ({result?.teamAutoCategory || 'N/A'})
-                </Typography>
-              </Box>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                <Typography variant="body2">Teleop:</Typography>
-                <Typography 
-                  variant="body2" 
-                  sx={{ fontWeight: 'bold', color: getColorForScore(result?.teamStats?.teleop || 0) }}
-                >
-                  {(result?.teamStats?.teleop || 0).toFixed(1)} ({result?.teamTeleopCategory || 'N/A'})
-                </Typography>
-              </Box>
+
+          {/* Partner Team Stats */}
+          <Box sx={{ mb: 3 }}>
+            <Typography variant="subtitle2" sx={{ fontWeight: 'bold', mb: 1, textDecoration: 'underline' }}>
+              Partner Team (#{match.teamNumber})
+            </Typography>
+            <Grid container spacing={1}>
+              <Grid item xs={4}>
+                <Box sx={{ 
+                  p: 1, 
+                  backgroundColor: match.complementBonus?.auto === 'HIGH' ? '#fff3e0' : '#f0f0f0',
+                  borderRadius: 1, 
+                  textAlign: 'center',
+                  border: match.complementBonus?.auto === 'HIGH' ? '2px solid #ff9800' : 'none'
+                }}>
+                  <Typography variant="caption" display="block" sx={{ fontWeight: 'bold' }}>Auto</Typography>
+                  <Typography variant="body2" sx={{ color: getColorForScore(match.partnerAuto || 0), fontWeight: 'bold' }}>
+                    {(match.partnerAuto || 0).toFixed(1)}
+                  </Typography>
+                  <Typography variant="caption" display="block">{match.autoCategory || 'N/A'}</Typography>
+                  {match.complementBonus?.auto === 'HIGH' && (
+                    <Typography variant="caption" display="block" sx={{ color: '#ff9800', fontWeight: 'bold', mt: 0.5 }}>
+                      ⭐ Bonus
+                    </Typography>
+                  )}
+                </Box>
+              </Grid>
+              <Grid item xs={4}>
+                <Box sx={{ 
+                  p: 1, 
+                  backgroundColor: match.complementBonus?.teleop === 'HIGH' ? '#fff3e0' : '#f0f0f0',
+                  borderRadius: 1, 
+                  textAlign: 'center',
+                  border: match.complementBonus?.teleop === 'HIGH' ? '2px solid #ff9800' : 'none'
+                }}>
+                  <Typography variant="caption" display="block" sx={{ fontWeight: 'bold' }}>Teleop</Typography>
+                  <Typography variant="body2" sx={{ color: getColorForScore(match.partnerTeleop || 0), fontWeight: 'bold' }}>
+                    {(match.partnerTeleop || 0).toFixed(1)}
+                  </Typography>
+                  <Typography variant="caption" display="block">{match.teleopCategory || 'N/A'}</Typography>
+                  {match.complementBonus?.teleop === 'HIGH' && (
+                    <Typography variant="caption" display="block" sx={{ color: '#ff9800', fontWeight: 'bold', mt: 0.5 }}>
+                      ⭐ Bonus
+                    </Typography>
+                  )}
+                </Box>
+              </Grid>
+              <Grid item xs={4}>
+                <Box sx={{ 
+                  p: 1, 
+                  backgroundColor: match.complementBonus?.endgame === 'HIGH' ? '#fff3e0' : '#f0f0f0',
+                  borderRadius: 1, 
+                  textAlign: 'center',
+                  border: match.complementBonus?.endgame === 'HIGH' ? '2px solid #ff9800' : 'none'
+                }}>
+                  <Typography variant="caption" display="block" sx={{ fontWeight: 'bold' }}>Endgame</Typography>
+                  <Typography variant="body2" sx={{ color: getColorForScore(match.partnerEndgame || 0), fontWeight: 'bold' }}>
+                    {(match.partnerEndgame || 0).toFixed(1)}
+                  </Typography>
+                  <Typography variant="caption" display="block">{match.endgameCategory || 'N/A'}</Typography>
+                  {match.complementBonus?.endgame === 'HIGH' && (
+                    <Typography variant="caption" display="block" sx={{ color: '#ff9800', fontWeight: 'bold', mt: 0.5 }}>
+                      ⭐ Bonus
+                    </Typography>
+                  )}
+                </Box>
+              </Grid>
             </Grid>
-            <Grid item xs={6}>
-              <Typography variant="subtitle2" gutterBottom>Partner Team</Typography>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                <Typography variant="body2">Auto:</Typography>
-                <Typography 
-                  variant="body2" 
-                  sx={{ fontWeight: 'bold', color: getColorForScore(match.partnerAuto || 0) }}
-                >
-                  {(match.partnerAuto || 0).toFixed(1)} ({match.autoCategory || 'N/A'})
+          </Box>
+
+          {/* Synergy Info */}
+          {synergyItems.length > 0 && (
+            <Alert severity="info" sx={{ mb: 2 }}>
+              <Typography variant="caption" sx={{ display: 'block', fontWeight: 'bold', mb: 0.5 }}>
+                Why this match works:
+              </Typography>
+              {synergyItems.map((item, idx) => (
+                <Typography key={idx} variant="caption" display="block">
+                  ✓ {item}
                 </Typography>
-              </Box>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                <Typography variant="body2">Teleop:</Typography>
-                <Typography 
-                  variant="body2" 
-                  sx={{ fontWeight: 'bold', color: getColorForScore(match.partnerTeleop || 0) }}
-                >
-                  {(match.partnerTeleop || 0).toFixed(1)} ({match.teleopCategory || 'N/A'})
-                </Typography>
-              </Box>
-            </Grid>
-          </Grid>
-          
-          <Typography variant="caption" color="textSecondary" sx={{ mt: 1, display: 'block', fontStyle: 'italic' }}>
-            Note: Teleop score includes endgame performance
-          </Typography>
-          
-          {index === 0 && (
-            <Alert severity="success" sx={{ mt: 2 }}>
-              Perfect Match! This team complements your strengths and weaknesses.
+              ))}
+            </Alert>
+          )}
+
+          {isTopMatch && (
+            <Alert severity="success">
+              <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
+                🏆 PERFECT MATCH! This team's strengths complement your weaknesses perfectly.
+              </Typography>
             </Alert>
           )}
         </CardContent>
